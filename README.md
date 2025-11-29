@@ -34,13 +34,33 @@ This repository implements lightweight, Go-friendly versions of these endpoints 
 
 ## Running the demo
 
+Goal: show the end-to-end SCRAPI flow in three quick moves:
+
+1. Start the server.
+2. Post a signed statement.
+3. See the returned locator and receipt.
+
+### 1) Start the server
+
 ```bash
 go run ./cmd/scrapi-demo
 ```
 
 Default listen address: `:8080`.
 
-Register a COSE_Sign1 blob:
+### 2) Register with the bundled client (auto-generates a COSE_Sign1)
+
+```bash
+go run ./cmd/scrapi-client -addr http://localhost:8080
+```
+
+Flags:
+
+- `-file path/to/payload.cose` to send your own COSE_Sign1 instead of a generated one.
+- `-message "text"` to change the payload used for the generated COSE_Sign1.
+- `-out receipt.cose` to write the returned receipt to a file.
+
+### 2b) Register with curl (if you already have a COSE_Sign1 blob)
 
 ```bash
 curl -X POST \
@@ -49,7 +69,9 @@ curl -X POST \
   http://localhost:8080/entries
 ```
 
-You will receive a dummy receipt and locator ID.
+### 3) Observe the response
+
+Both methods return a locator ID (used to query `/entries/{id}`) and a dummy receipt. The demo issues receipts synchronously for simplicity.
 
 ## Other ways to build a SCITT service
 
