@@ -43,10 +43,21 @@ type InMemoryTransparencyService struct {
 	pubKey     ed25519.PublicKey
 	keyID      []byte
 	logID      string
+	async      bool
+	asyncDelay time.Duration
 }
 
 // NewInMemoryTransparencyService constructs an empty in-memory service.
 func NewInMemoryTransparencyService() *InMemoryTransparencyService {
+	return newInMemoryTransparencyService(false, 0)
+}
+
+// NewInMemoryTransparencyServiceAsync constructs an in-memory service that simulates async inclusion.
+func NewInMemoryTransparencyServiceAsync(delay time.Duration) *InMemoryTransparencyService {
+	return newInMemoryTransparencyService(true, delay)
+}
+
+func newInMemoryTransparencyService(async bool, delay time.Duration) *InMemoryTransparencyService {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		panic(fmt.Errorf("generate ed25519 key: %w", err))
@@ -66,6 +77,8 @@ func NewInMemoryTransparencyService() *InMemoryTransparencyService {
 		keyID:      []byte("demo-log-key"),
 		logID:      "demo-log",
 		audits:     make([]AuditRecord, 0, 32),
+		async:      async,
+		asyncDelay: delay,
 	}
 }
 
@@ -94,6 +107,21 @@ func (s *InMemoryTransparencyService) Register(ctx context.Context, ss SignedSta
 			Detail:  fmt.Sprintf("bytes=%d", len(ss.Raw)),
 		})
 		return loc, existing, nil
+	}
+
+	s.statements[id] = ss
+
+	if s.async {
+		s.statuses[id] = StatusPending
+		s.audits = append(s.audits, AuditRecord{
+			Time:    time.Now().UTC(),
+			Event:   "register-pending",
+			Locator: id,
+			Status:  StatusPending,
+			Detail:  fmt.Sprintf("bytes=%d", len(ss.Raw)),
+		})
+		go s.completeAsync(id)
+		return loc, nil, nil
 	}
 
 	leaf, root, path, size := s.tree.Append(ss.Raw)
@@ -126,7 +154,6 @@ func (s *InMemoryTransparencyService) Register(ctx context.Context, ss SignedSta
 		Msg: receiptMsg,
 	}
 
-	s.statements[id] = ss
 	s.receipts[id] = receipt
 	s.statuses[id] = StatusSuccess
 	s.audits = append(s.audits, AuditRecord{
@@ -182,6 +209,61 @@ func (s *InMemoryTransparencyService) ResolveReceipt(ctx context.Context, id str
 	})
 
 	return receipt, nil
+}
+
+func (s *InMemoryTransparencyService) completeAsync(id string) {
+	time.Sleep(s.asyncDelay)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.statuses[id] != StatusPending {
+		return
+	}
+	ss, ok := s.statements[id]
+	if !ok {
+		return
+	}
+
+	leaf, root, path, size := s.tree.Append(ss.Raw)
+	payload := ReceiptPayload{
+		LogID:     s.logID,
+		LeafHash:  leaf,
+		RootHash:  root,
+		TreeSize:  uint64(size),
+		Path:      path,
+		Timestamp: time.Now().UTC().Unix(),
+	}
+	payloadRaw, err := cbor.Marshal(payload)
+	if err != nil {
+		return
+	}
+
+	receiptMsg := cose.NewSign1Message()
+	receiptMsg.Payload = payloadRaw
+	receiptMsg.Headers.Protected.SetAlgorithm(cose.AlgorithmEdDSA)
+	receiptMsg.Headers.Unprotected[cose.HeaderLabelKeyID] = s.keyID
+	if err := receiptMsg.Sign(rand.Reader, nil, s.signer); err != nil {
+		return
+	}
+	receiptRaw, err := receiptMsg.MarshalCBOR()
+	if err != nil {
+		return
+	}
+	receipt := &Receipt{
+		Raw: receiptRaw,
+		Msg: receiptMsg,
+	}
+
+	s.receipts[id] = receipt
+	s.statuses[id] = StatusSuccess
+	s.audits = append(s.audits, AuditRecord{
+		Time:    time.Now().UTC(),
+		Event:   "register-complete",
+		Locator: id,
+		Status:  StatusSuccess,
+		Detail:  fmt.Sprintf("bytes=%d", len(ss.Raw)),
+	})
 }
 
 // AuditTrail returns a copy of the collected audit records.

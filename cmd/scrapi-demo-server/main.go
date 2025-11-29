@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/mhlotto/go-scitt-scrapi/scrapi"
 	"github.com/mhlotto/go-scitt-scrapi/scrapi/httpserver"
@@ -14,7 +15,8 @@ func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	flag.Parse()
 
-	service := scrapi.NewInMemoryTransparencyService()
+	// Use async mode to demonstrate pending -> success flow.
+	service := scrapi.NewInMemoryTransparencyServiceAsync(2 * time.Second)
 	stmtSigner, _, stmtKID, err := scrapi.NewEd25519Signer("demo-stmt-key")
 	if err != nil {
 		log.Fatalf("init statement signer: %v", err)

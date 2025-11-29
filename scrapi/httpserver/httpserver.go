@@ -145,7 +145,7 @@ func registerHandler(opts HandlerOptions, logger *log.Logger) http.HandlerFunc {
 			return
 		}
 
-		w.WriteHeader(http.StatusSeeOther)
+		w.WriteHeader(http.StatusAccepted)
 	}
 }
 
