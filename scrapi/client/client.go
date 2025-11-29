@@ -101,6 +101,7 @@ func (c *Client) FetchReceipt(ctx context.Context, id string, maxAttempts int, d
 			defer resp.Body.Close()
 			return io.ReadAll(resp.Body)
 		}
+		// #nosec G104
 		resp.Body.Close()
 		if resp.StatusCode == http.StatusAccepted && attempt < maxAttempts {
 			select {
