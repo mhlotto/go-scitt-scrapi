@@ -32,7 +32,11 @@ func main() {
 
 	hostPort := *addr
 	if !strings.HasPrefix(hostPort, "http://") && !strings.HasPrefix(hostPort, "https://") {
-		hostPort = "http://localhost" + hostPort
+		scheme := "http://"
+		if *tlsCert != "" && *tlsKey != "" {
+			scheme = "https://"
+		}
+		hostPort = scheme + "localhost" + hostPort
 	}
 
 	mux := httpserver.NewMux(httpserver.HandlerOptions{
@@ -62,7 +66,11 @@ func main() {
 		log.Fatalf("configure TLS: %v", err)
 	}
 
-	log.Printf("starting SCRAPI demo server on %s", *addr)
+	scheme := "http"
+	if srv.TLSConfig != nil && *tlsCert != "" && *tlsKey != "" {
+		scheme = "https"
+	}
+	log.Printf("starting SCRAPI demo server on %s (%s)", *addr, scheme)
 	if srv.TLSConfig != nil && *tlsCert != "" && *tlsKey != "" {
 		if err := srv.ListenAndServeTLS(*tlsCert, *tlsKey); err != nil {
 			log.Fatalf("server error: %v", err)
@@ -101,8 +109,11 @@ func authSchemes(token, clientCA string) []string {
 }
 
 func configureTLS(srv *http.Server, cert, key, clientCA string) error {
-	if cert == "" || key == "" {
+	if cert == "" && key == "" {
 		return nil
+	}
+	if cert == "" || key == "" {
+		return fmt.Errorf("both -tls-cert and -tls-key are required to enable TLS")
 	}
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
 	if clientCA != "" {
