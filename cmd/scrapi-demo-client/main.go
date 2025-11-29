@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -34,6 +35,11 @@ func main() {
 	caPath := flag.String("tls-ca", "", "path to CA bundle to trust (optional)")
 	clientCert := flag.String("tls-cert", "", "path to client TLS cert (optional)")
 	clientKey := flag.String("tls-key", "", "path to client TLS key (optional)")
+	noPoll := flag.Bool("no-poll", false, "do not poll for receipt if registration is pending")
+	pollAttempts := flag.Int("poll-attempts", 10, "max polling attempts when waiting for receipt")
+	pollInterval := flag.Duration("poll-interval", 2*time.Second, "poll interval when waiting for receipt")
+	printReceiptJSON := flag.Bool("print-receipt-json", false, "print decoded receipt payload as JSON")
+	fetchReceipts := flag.Bool("fetch-receipts", false, "fetch /receipts/{id} after registration")
 	flag.Parse()
 
 	payload, contentType, checkLeaf, err := loadPayload(*file, *sbom, *vex, *message, *wrapSBOM, *expectLeaf)
@@ -52,7 +58,10 @@ func main() {
 	httpClient := &http.Client{Transport: transport}
 
 	c := client.Client{BaseURL: *addr, HTTPClient: httpClient, Token: *token}
-	locator, receipt, err := c.RegisterWithContentType(context.Background(), payload, contentType)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	locator, receipt, err := c.RegisterWithContentType(ctx, payload, contentType)
 	if err != nil {
 		log.Fatalf("register entry: %v", err)
 	}
@@ -60,9 +69,30 @@ func main() {
 	fmt.Printf("Registered entry locator: %s\n", locator)
 	fmt.Printf("Receipt size: %d bytes\n", len(receipt))
 
+	if len(receipt) == 0 && !*noPoll {
+		fmt.Println("No receipt yet; polling /entries/{id} ...")
+		receipt, err = c.FetchReceipt(ctx, locator, *pollAttempts, *pollInterval)
+		if err != nil {
+			log.Fatalf("poll for receipt: %v", err)
+		}
+		fmt.Printf("Fetched receipt after polling (%d bytes)\n", len(receipt))
+	}
+
 	if len(receipt) > 0 {
-		if err := verifyReceipt(context.Background(), httpClient, *addr, locator, receipt, payload, checkLeaf); err != nil {
+		if err := verifyReceipt(context.Background(), httpClient, *addr, locator, receipt, payload, checkLeaf, *printReceiptJSON); err != nil {
 			log.Fatalf("verify receipt: %v", err)
+		}
+	}
+
+	if *fetchReceipts {
+		fmt.Println("Fetching /receipts/{id} ...")
+		data, err := c.FetchReceipt(ctx, locator, 1, 0)
+		if err != nil {
+			log.Fatalf("fetch /receipts/{id}: %v", err)
+		}
+		fmt.Printf("Fetched receipt directly (%d bytes)\n", len(data))
+		if err := verifyReceipt(context.Background(), httpClient, *addr, locator, data, payload, checkLeaf, *printReceiptJSON); err != nil {
+			log.Fatalf("verify fetched receipt: %v", err)
 		}
 	}
 
@@ -121,7 +151,7 @@ func loadPayload(cosePath, sbomPath, vexPath, msg string, wrapSBOM bool, checkLe
 	}
 }
 
-func verifyReceipt(ctx context.Context, httpClient *http.Client, baseURL, locator string, receiptRaw []byte, submitted []byte, checkLeaf bool) error {
+func verifyReceipt(ctx context.Context, httpClient *http.Client, baseURL, locator string, receiptRaw []byte, submitted []byte, checkLeaf bool, printJSON bool) error {
 	// Fetch configuration to get the log public key.
 	cfgURL := strings.TrimSuffix(baseURL, "/") + "/.well-known/transparency-configuration"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfgURL, nil)
@@ -177,6 +207,12 @@ func verifyReceipt(ctx context.Context, httpClient *http.Client, baseURL, locato
 	fmt.Printf("  root:     %x\n", payload.RootHash)
 	fmt.Printf("  leaf:     %x\n", payload.LeafHash)
 	fmt.Printf("  ts:       %s\n", time.Unix(payload.Timestamp, 0).UTC().Format(time.RFC3339))
+	if printJSON {
+		encoded, _ := cbor.Marshal(payload)
+		fmt.Printf("  payload-cbor: %x\n", encoded)
+		jsonBytes, _ := json.MarshalIndent(payload, "", "  ")
+		fmt.Printf("  payload-json:\n%s\n", string(jsonBytes))
+	}
 
 	if err := checkMerkleProof(payload); err != nil {
 		return fmt.Errorf("merkle proof check failed: %w", err)

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // Client is a helper for calling the SCRAPI demo server.
@@ -72,4 +73,44 @@ func (c *Client) RegisterWithContentType(ctx context.Context, payload []byte, co
 	}
 
 	return locator, receipt, nil
+}
+
+// FetchReceipt polls /entries/{id} until success or a max number of attempts.
+func (c *Client) FetchReceipt(ctx context.Context, id string, maxAttempts int, delay time.Duration) ([]byte, error) {
+	client := c.HTTPClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+	if maxAttempts < 1 {
+		maxAttempts = 1
+	}
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(c.BaseURL, "/")+"/entries/"+id, nil)
+		if err != nil {
+			return nil, fmt.Errorf("build request: %w", err)
+		}
+		if c.Token != "" {
+			req.Header.Set("Authorization", "Bearer "+c.Token)
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("GET entries/%s: %w", id, err)
+		}
+		if resp.StatusCode == http.StatusOK {
+			defer resp.Body.Close()
+			return io.ReadAll(resp.Body)
+		}
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusAccepted && attempt < maxAttempts {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+				continue
+			}
+		}
+		return nil, fmt.Errorf("unexpected status %s", resp.Status)
+	}
+	return nil, fmt.Errorf("receipt not available after %d attempts", maxAttempts)
 }
