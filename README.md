@@ -30,7 +30,7 @@ This repository implements lightweight, Go-friendly versions of these endpoints 
 - Provides an in-memory `TransparencyService` that hashes submitted COSE payloads to form locator IDs and returns a simple dummy COSE receipt.
 - Implements SCRAPI-style HTTP handlers in `scrapi/httpserver`.
 - Supplies a minimal client helper in `scrapi/client`.
-- Includes a runnable demo server under `cmd/scrapi-demo`.
+- Includes a runnable demo server under `cmd/scrapi-demo-server`.
 
 ## Running the demo
 
@@ -43,7 +43,7 @@ Goal: show the end-to-end SCRAPI flow in three quick moves:
 ### 1) Start the server
 
 ```bash
-go run ./cmd/scrapi-demo
+go run ./cmd/scrapi-demo-server
 ```
 
 Default listen address: `:8080`.
@@ -51,7 +51,7 @@ Default listen address: `:8080`.
 ### 2) Register with the bundled client (auto-generates a COSE_Sign1)
 
 ```bash
-go run ./cmd/scrapi-client -addr http://localhost:8080
+go run ./cmd/scrapi-demo-client -addr http://localhost:8080
 ```
 
 Flags:
