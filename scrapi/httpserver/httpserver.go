@@ -13,14 +13,16 @@ import (
 )
 
 type HandlerOptions struct {
-	Service   scrapi.TransparencyService
-	IssuerURL string
-	JWKSURL   string
-	Logger    *log.Logger
-	LogKeyID  []byte
-	LogPubKey []byte
-	HashAlg   string
-	TreeType  string
+	Service       scrapi.TransparencyService
+	IssuerURL     string
+	JWKSURL       string
+	Logger        *log.Logger
+	LogKeyID      []byte
+	LogPubKey     []byte
+	HashAlg       string
+	TreeType      string
+	StmtSigner    cose.Signer
+	StmtSignerKID []byte
 }
 
 // NewMux wires up SCRAPI-flavored routes.
@@ -82,10 +84,6 @@ func registerHandler(opts HandlerOptions, logger *log.Logger) http.HandlerFunc {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/cose") {
-			writeProblem(w, http.StatusUnsupportedMediaType, "invalid content type", "expected application/cose")
-			return
-		}
 
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -95,17 +93,36 @@ func registerHandler(opts HandlerOptions, logger *log.Logger) http.HandlerFunc {
 		}
 		defer r.Body.Close()
 
-		var msg cose.Sign1Message
-		if err := cbor.Unmarshal(body, &msg); err != nil {
-			logger.Printf("register unmarshal error: %v", err)
-			writeProblem(w, http.StatusBadRequest, "parse COSE_Sign1", err.Error())
+		ct := r.Header.Get("Content-Type")
+		var ss scrapi.SignedStatement
+
+		switch {
+		case strings.HasPrefix(ct, "application/cose"):
+			var msg cose.Sign1Message
+			if err := cbor.Unmarshal(body, &msg); err != nil {
+				logger.Printf("register unmarshal error: %v", err)
+				writeProblem(w, http.StatusBadRequest, "parse COSE_Sign1", err.Error())
+				return
+			}
+			ss = scrapi.SignedStatement{Raw: body, Msg: &msg}
+		case isSBOMContentType(ct):
+			if opts.StmtSigner == nil {
+				writeProblem(w, http.StatusUnsupportedMediaType, "cannot sign sbom", "server missing statement signer")
+				return
+			}
+			wrapped, err := scrapi.WrapPayloadAsCOSE(body, opts.StmtSigner, opts.StmtSignerKID)
+			if err != nil {
+				logger.Printf("wrap sbom error: %v", err)
+				writeProblem(w, http.StatusBadRequest, "wrap SBOM", err.Error())
+				return
+			}
+			ss = wrapped
+		default:
+			writeProblem(w, http.StatusUnsupportedMediaType, "invalid content type", "expected application/cose or SBOM content type")
 			return
 		}
 
-		loc, receipt, err := opts.Service.Register(r.Context(), scrapi.SignedStatement{
-			Raw: body,
-			Msg: &msg,
-		})
+		loc, receipt, err := opts.Service.Register(r.Context(), ss)
 		if err != nil {
 			logger.Printf("registration failed: %v", err)
 			writeProblem(w, http.StatusBadRequest, "registration failed", err.Error())
@@ -228,4 +245,17 @@ func writeProblem(w http.ResponseWriter, status int, title, detail string) {
 		return
 	}
 	_, _ = w.Write(data)
+}
+
+func isSBOMContentType(ct string) bool {
+	switch {
+	case strings.HasPrefix(ct, "application/sbom+json"):
+		return true
+	case strings.HasPrefix(ct, "application/vnd.cyclonedx+json"):
+		return true
+	case strings.HasPrefix(ct, "application/spdx+json"):
+		return true
+	default:
+		return false
+	}
 }

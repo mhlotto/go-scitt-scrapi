@@ -21,18 +21,20 @@ import (
 func main() {
 	addr := flag.String("addr", "http://localhost:8080", "base URL of the SCRAPI service")
 	file := flag.String("file", "", "path to a COSE_Sign1 payload to submit (optional)")
+	sbom := flag.String("sbom", "", "path to an SBOM (CycloneDX/SPDX JSON) to submit")
+	wrapSBOM := flag.Bool("wrap-sbom", true, "wrap SBOM bytes into a COSE_Sign1 before sending")
 	out := flag.String("out", "", "path to write the returned receipt (optional)")
 	message := flag.String("message", "hello from scrapi-client", "payload to embed in a generated COSE_Sign1 when no file is provided")
 	expectLeaf := flag.Bool("check-leaf", true, "check receipt leaf hash matches submitted payload hash")
 	flag.Parse()
 
-	cosePayload, err := loadPayload(*file, *message)
+	payload, contentType, checkLeaf, err := loadPayload(*file, *sbom, *message, *wrapSBOM, *expectLeaf)
 	if err != nil {
 		log.Fatalf("prepare payload: %v", err)
 	}
 
 	c := client.Client{BaseURL: *addr}
-	locator, receipt, err := c.Register(context.Background(), cosePayload)
+	locator, receipt, err := c.RegisterWithContentType(context.Background(), payload, contentType)
 	if err != nil {
 		log.Fatalf("register entry: %v", err)
 	}
@@ -41,7 +43,7 @@ func main() {
 	fmt.Printf("Receipt size: %d bytes\n", len(receipt))
 
 	if len(receipt) > 0 {
-		if err := verifyReceipt(context.Background(), *addr, locator, receipt, cosePayload, *expectLeaf); err != nil {
+		if err := verifyReceipt(context.Background(), *addr, locator, receipt, payload, checkLeaf); err != nil {
 			log.Fatalf("verify receipt: %v", err)
 		}
 	}
@@ -54,16 +56,37 @@ func main() {
 	}
 }
 
-// loadPayload returns COSE_Sign1 bytes either from a file or by generating a simple message.
-func loadPayload(path string, msg string) ([]byte, error) {
-	if path != "" {
-		return os.ReadFile(path)
+// loadPayload returns the bytes to submit, content type, and whether to check leaf hash.
+func loadPayload(cosePath, sbomPath, msg string, wrapSBOM bool, checkLeaf bool) ([]byte, string, bool, error) {
+	switch {
+	case cosePath != "":
+		data, err := os.ReadFile(cosePath)
+		return data, "application/cose", checkLeaf, err
+	case sbomPath != "":
+		data, err := os.ReadFile(sbomPath)
+		if err != nil {
+			return nil, "", checkLeaf, err
+		}
+		if wrapSBOM {
+			signer, _, kid, err := scrapi.NewEd25519Signer("sbom-demo-key")
+			if err != nil {
+				return nil, "", checkLeaf, err
+			}
+			ss, err := scrapi.WrapPayloadAsCOSE(data, signer, kid)
+			if err != nil {
+				return nil, "", checkLeaf, err
+			}
+			return ss.Raw, "application/cose", checkLeaf, nil
+		}
+		// Sending raw SBOM; skip leaf check since server will re-wrap.
+		return data, guessSBOMContentType(sbomPath), false, nil
+	default:
+		sign1 := cose.Sign1Message{
+			Payload: []byte(msg),
+		}
+		raw, err := cbor.Marshal(sign1)
+		return raw, "application/cose", checkLeaf, err
 	}
-
-	sign1 := cose.Sign1Message{
-		Payload: []byte(msg),
-	}
-	return cbor.Marshal(sign1)
 }
 
 func verifyReceipt(ctx context.Context, baseURL, locator string, receiptRaw []byte, submitted []byte, checkLeaf bool) error {
@@ -168,6 +191,18 @@ func scrapiMerkleLeaf(data []byte) []byte {
 	h.Write([]byte{0x00})
 	h.Write(data)
 	return h.Sum(nil)
+}
+
+func guessSBOMContentType(path string) string {
+	lower := strings.ToLower(path)
+	switch {
+	case strings.HasSuffix(lower, ".cdx.json"), strings.HasSuffix(lower, ".cyclonedx.json"):
+		return "application/vnd.cyclonedx+json"
+	case strings.HasSuffix(lower, ".spdx.json"), strings.HasSuffix(lower, ".spdx.jsonld"):
+		return "application/spdx+json"
+	default:
+		return "application/sbom+json"
+	}
 }
 
 func equalBytes(a, b []byte) bool {

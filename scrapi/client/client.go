@@ -17,17 +17,25 @@ type Client struct {
 
 // Register posts a COSE_Sign1 payload to /entries and returns the locator ID and receipt bytes.
 func (c *Client) Register(ctx context.Context, cosePayload []byte) (string, []byte, error) {
+	return c.RegisterWithContentType(ctx, cosePayload, "application/cose")
+}
+
+// RegisterWithContentType posts a payload to /entries with the given content type.
+func (c *Client) RegisterWithContentType(ctx context.Context, payload []byte, contentType string) (string, []byte, error) {
 	client := c.HTTPClient
 	if client == nil {
 		client = http.DefaultClient
 	}
 
 	endpoint := strings.TrimSuffix(c.BaseURL, "/") + "/entries"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(cosePayload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return "", nil, fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/cose")
+	if contentType == "" {
+		contentType = "application/cose"
+	}
+	req.Header.Set("Content-Type", contentType)
 
 	resp, err := client.Do(req)
 	if err != nil {

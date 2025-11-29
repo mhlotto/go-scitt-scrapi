@@ -15,6 +15,10 @@ func main() {
 	flag.Parse()
 
 	service := scrapi.NewInMemoryTransparencyService()
+	stmtSigner, _, stmtKID, err := scrapi.NewEd25519Signer("demo-stmt-key")
+	if err != nil {
+		log.Fatalf("init statement signer: %v", err)
+	}
 
 	hostPort := *addr
 	if !strings.HasPrefix(hostPort, "http://") && !strings.HasPrefix(hostPort, "https://") {
@@ -22,12 +26,14 @@ func main() {
 	}
 
 	mux := httpserver.NewMux(httpserver.HandlerOptions{
-		Service:   service,
-		IssuerURL: hostPort,
-		LogPubKey: service.LogPublicKey(),
-		LogKeyID:  service.LogKeyID(),
-		HashAlg:   "sha-256",
-		TreeType:  "binary-merkle-v1",
+		Service:       service,
+		IssuerURL:     hostPort,
+		LogPubKey:     service.LogPublicKey(),
+		LogKeyID:      service.LogKeyID(),
+		HashAlg:       "sha-256",
+		TreeType:      "binary-merkle-v1",
+		StmtSigner:    stmtSigner,
+		StmtSignerKID: stmtKID,
 	})
 
 	log.Printf("starting SCRAPI demo server on %s", *addr)

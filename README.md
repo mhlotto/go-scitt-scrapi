@@ -33,6 +33,8 @@ This repository implements lightweight, Go-friendly versions of these endpoints 
 - Includes a runnable demo server under `cmd/scrapi-demo-server`.
 - Captures an in-memory audit trail of registrations, status checks, and receipt lookups.
 - Exposes the log public key and key ID via the well-known configuration endpoint for verification tooling.
+- Accepts SBOM submissions (CycloneDX/SPDX JSON) and can wrap them into COSE for registration.
+- Includes a Syft-powered SBOM generator under `cmd/syft-sbom`.
 
 ## Running the demo
 
@@ -61,6 +63,7 @@ Flags:
 - `-file path/to/payload.cose` to send your own COSE_Sign1 instead of a generated one.
 - `-message "text"` to change the payload used for the generated COSE_Sign1.
 - `-out receipt.cose` to write the returned receipt to a file.
+- `-sbom fixtures/sbom/sample-cyclonedx.json` to send an SBOM; `-wrap-sbom=false` sends raw SBOM (server wraps), `-wrap-sbom=true` signs locally and sends COSE.
 
 ### 2b) Register with curl (if you already have a COSE_Sign1 blob)
 
@@ -79,6 +82,18 @@ Both methods return a locator ID (used to query `/entries/{id}`) and a signed re
 
 - The server prints audit-friendly log lines for registrations, status queries, and receipt fetches.
 - The in-memory service retains an audit trail in memory; `(*scrapi.InMemoryTransparencyService).AuditTrail()` returns a copy for inspection in tests or additional tooling.
+
+## SBOM helpers
+
+- Generate an SBOM with Syft (CycloneDX JSON by default):
+  ```bash
+  go run ./cmd/syft-sbom -source . -out sbom.json
+  ```
+- Register that SBOM via the demo client:
+  ```bash
+  go run ./cmd/scrapi-demo-client -addr http://localhost:8080 -sbom sbom.json -wrap-sbom=true
+  ```
+- A sample CycloneDX SBOM is available at `fixtures/sbom/sample-cyclonedx.json`.
 
 ## Other ways to build a SCITT service
 

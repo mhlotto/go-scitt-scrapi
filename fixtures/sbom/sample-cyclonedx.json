@@ -1,0 +1,27 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2024-01-01T00:00:00Z",
+    "tools": [
+      {
+        "vendor": "Example",
+        "name": "go-scitt-scrapi-demo",
+        "version": "0.0.1"
+      }
+    ],
+    "component": {
+      "type": "application",
+      "name": "demo-app"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "example-lib",
+      "version": "1.0.0",
+      "purl": "pkg:golang/example-lib@1.0.0"
+    }
+  ]
+}

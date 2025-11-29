@@ -4,15 +4,16 @@ import (
 	"crypto/sha256"
 )
 
-// merkleLeaf and merkleNode hashes use simple domain separation to avoid collisions.
-func merkleLeaf(data []byte) []byte {
+// MerkleLeafHash computes a leaf hash with domain separation.
+func MerkleLeafHash(data []byte) []byte {
 	h := sha256.New()
 	h.Write([]byte{0x00})
 	h.Write(data)
 	return h.Sum(nil)
 }
 
-func merkleNode(left, right []byte) []byte {
+// MerkleNodeHash computes a parent hash with domain separation.
+func MerkleNodeHash(left, right []byte) []byte {
 	h := sha256.New()
 	h.Write([]byte{0x01})
 	h.Write(left)
@@ -33,7 +34,7 @@ type MerkleTree struct {
 
 // Append adds a new leaf, returning the leaf hash, root, proof path, and new size.
 func (t *MerkleTree) Append(data []byte) (leaf []byte, root []byte, proof []ProofNode, size int) {
-	leaf = merkleLeaf(data)
+	leaf = MerkleLeafHash(data)
 	t.leaves = append(t.leaves, leaf)
 	proof = t.buildProof(len(t.leaves) - 1)
 	root = t.currentRoot()
@@ -56,7 +57,7 @@ func (t *MerkleTree) currentRoot() []byte {
 			if i+1 < len(level) {
 				right = level[i+1]
 			}
-			parent := merkleNode(left, right)
+			parent := MerkleNodeHash(left, right)
 			next = append(next, parent)
 		}
 		level = next
@@ -82,7 +83,7 @@ func (t *MerkleTree) buildProof(idx int) []ProofNode {
 			if i+1 < len(level) {
 				right = level[i+1]
 			}
-			parent := merkleNode(left, right)
+			parent := MerkleNodeHash(left, right)
 			next = append(next, parent)
 
 			if i == pos || i+1 == pos {
