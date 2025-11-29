@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+    "path/filepath"
 	"strings"
 	"time"
 
@@ -118,7 +119,7 @@ func configureTLS(srv *http.Server, cert, key, clientCA string) error {
 	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
 	if clientCA != "" {
 		certPool := x509.NewCertPool()
-		data, err := os.ReadFile(clientCA)
+		data, err := os.ReadFile(filepath.Clean(clientCA))
 		if err != nil {
 			return fmt.Errorf("read client CA: %w", err)
 		}
