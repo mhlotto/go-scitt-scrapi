@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"math"
 	"sync"
 	"time"
 
@@ -279,11 +278,8 @@ func safeUint64(v int) (uint64, error) {
 	if v < 0 {
 		return 0, fmt.Errorf("negative size: %d", v)
 	}
-	// int is smaller or equal to the machine word; this guard prevents overflow when converting to uint64.
+	// int cannot exceed math.MaxUint64 on this platform; still add a #nosec guard for gosec.
 	// #nosec G115
-	if uint64(v) > math.MaxUint64 {
-		return 0, fmt.Errorf("size too large: %d", v)
-	}
 	return uint64(v), nil
 }
 
