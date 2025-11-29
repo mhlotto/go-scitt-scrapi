@@ -53,6 +53,11 @@ go run ./cmd/scrapi-demo-server
 
 Default listen address: `:8080`.
 
+Auth/TLS options:
+- `-auth-token secret` to require `Authorization: Bearer secret` on requests.
+- `-tls-cert server.crt -tls-key server.key` to serve HTTPS.
+- `-tls-client-ca ca.crt` to require and verify client certificates (mTLS) when HTTPS is enabled.
+
 ### 2) Register with the bundled client (auto-generates a COSE_Sign1)
 
 ```bash
@@ -66,6 +71,8 @@ Flags:
 - `-out receipt.cose` to write the returned receipt to a file.
 - `-sbom fixtures/sbom/sample-cyclonedx.json` to send an SBOM; `-wrap-sbom=false` sends raw SBOM (server wraps), `-wrap-sbom=true` signs locally and sends COSE.
 - `-vex fixtures/vex/sample-vex.json` to send a VEX/CSAF-style advisory (wrapped and signed locally).
+- `-token secret` to supply a bearer token when the server requires it.
+- `-tls-ca ca.crt` to trust a custom CA; `-tls-cert client.crt -tls-key client.key` to present a client cert for mTLS.
 
 ### 2b) Register with curl (if you already have a COSE_Sign1 blob)
 
@@ -98,6 +105,32 @@ Both methods return a locator ID (used to query `/entries/{id}`) and a signed re
 - A sample CycloneDX SBOM is available at `fixtures/sbom/sample-cyclonedx.json`.
 - A sample VEX/CSAF advisory is available at `fixtures/vex/sample-vex.json` (use `-vex ...` with the demo client).
 - Bigger picture: SCITT receipts make SBOM sharing tamper-evident and time-bound. A producer can publish an SBOM with a receipt, and consumers can verify the receipt (signature and Merkle proof) to ensure the SBOM is exactly what was registered, when it was registered, and anchored to a log root. Pairing SBOMs with receipts helps downstream scanners, auditors, and deploy pipelines trust that the SBOM they ingest hasn’t been swapped or modified in transit.
+
+## Auth & TLS quickstart
+
+- Bearer auth (demo shared-secret):
+  - Server: `go run ./cmd/scrapi-demo-server -auth-token secret`
+  - Client: add `-token secret`
+- HTTPS:
+  - Generate cert/key (see `scripts/gen_certs.sh` for a quick demo CA + certs).
+  - Server: `-tls-cert server.crt -tls-key server.key`
+  - Client: `-tls-ca ca.crt` to trust the server cert.
+- mTLS:
+  - Server: also set `-tls-client-ca ca.crt` to require client certs.
+  - Client: `-tls-cert client.crt -tls-key client.key` and `-tls-ca ca.crt`.
+
+Scripted certs (demo-only):
+```bash
+./scripts/gen_certs.sh
+# Server (HTTPS + bearer + mTLS)
+go run ./cmd/scrapi-demo-server -addr :8443 -auth-token secret \
+  -tls-cert certs/server.crt.pem -tls-key certs/server.key.pem \
+  -tls-client-ca certs/ca.crt.pem
+# Client
+go run ./cmd/scrapi-demo-client -addr https://localhost:8443 -token secret \
+  -tls-ca certs/ca.crt.pem -tls-cert certs/client.crt.pem -tls-key certs/client.key.pem \
+  -sbom fixtures/sbom/sample-cyclonedx.json
+```
 
 ## End-to-end SBOM + dependency-check demo
 

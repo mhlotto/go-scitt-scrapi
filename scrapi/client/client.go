@@ -13,6 +13,7 @@ import (
 type Client struct {
 	BaseURL    string
 	HTTPClient *http.Client
+	Token      string
 }
 
 // Register posts a COSE_Sign1 payload to /entries and returns the locator ID and receipt bytes.
@@ -36,6 +37,9 @@ func (c *Client) RegisterWithContentType(ctx context.Context, payload []byte, co
 		contentType = "application/cose"
 	}
 	req.Header.Set("Content-Type", contentType)
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -43,7 +47,7 @@ func (c *Client) RegisterWithContentType(ctx context.Context, payload []byte, co
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusSeeOther {
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusSeeOther && resp.StatusCode != http.StatusAccepted {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return "", nil, fmt.Errorf("unexpected status %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
@@ -56,11 +60,15 @@ func (c *Client) RegisterWithContentType(ctx context.Context, payload []byte, co
 	locator := locParts[len(locParts)-1]
 
 	var receipt []byte
-	if resp.StatusCode == http.StatusCreated {
+	switch resp.StatusCode {
+	case http.StatusCreated:
 		receipt, err = io.ReadAll(resp.Body)
 		if err != nil {
 			return "", nil, fmt.Errorf("read receipt: %w", err)
 		}
+	case http.StatusAccepted:
+		// Pending; caller can poll later.
+	default:
 	}
 
 	return locator, receipt, nil
