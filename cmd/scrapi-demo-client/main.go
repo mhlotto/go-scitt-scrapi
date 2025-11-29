@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"flag"
 	"fmt"
 	"log"
@@ -28,6 +30,10 @@ func main() {
 	out := flag.String("out", "", "path to write the returned receipt (optional)")
 	message := flag.String("message", "hello from scrapi-client", "payload to embed in a generated COSE_Sign1 when no file is provided")
 	expectLeaf := flag.Bool("check-leaf", true, "check receipt leaf hash matches submitted payload hash")
+	token := flag.String("token", "", "optional bearer token for Authorization header")
+	caPath := flag.String("tls-ca", "", "path to CA bundle to trust (optional)")
+	clientCert := flag.String("tls-cert", "", "path to client TLS cert (optional)")
+	clientKey := flag.String("tls-key", "", "path to client TLS key (optional)")
 	flag.Parse()
 
 	payload, contentType, checkLeaf, err := loadPayload(*file, *sbom, *vex, *message, *wrapSBOM, *expectLeaf)
@@ -35,7 +41,17 @@ func main() {
 		log.Fatalf("prepare payload: %v", err)
 	}
 
-	c := client.Client{BaseURL: *addr}
+	transport := http.DefaultTransport
+	if *caPath != "" || *clientCert != "" || *clientKey != "" {
+		cfg, err := buildTLSConfig(*caPath, *clientCert, *clientKey)
+		if err != nil {
+			log.Fatalf("tls config: %v", err)
+		}
+		transport = &http.Transport{TLSClientConfig: cfg}
+	}
+	httpClient := &http.Client{Transport: transport}
+
+	c := client.Client{BaseURL: *addr, HTTPClient: httpClient, Token: *token}
 	locator, receipt, err := c.RegisterWithContentType(context.Background(), payload, contentType)
 	if err != nil {
 		log.Fatalf("register entry: %v", err)
@@ -45,7 +61,7 @@ func main() {
 	fmt.Printf("Receipt size: %d bytes\n", len(receipt))
 
 	if len(receipt) > 0 {
-		if err := verifyReceipt(context.Background(), *addr, locator, receipt, payload, checkLeaf); err != nil {
+		if err := verifyReceipt(context.Background(), httpClient, *addr, locator, receipt, payload, checkLeaf); err != nil {
 			log.Fatalf("verify receipt: %v", err)
 		}
 	}
@@ -105,14 +121,17 @@ func loadPayload(cosePath, sbomPath, vexPath, msg string, wrapSBOM bool, checkLe
 	}
 }
 
-func verifyReceipt(ctx context.Context, baseURL, locator string, receiptRaw []byte, submitted []byte, checkLeaf bool) error {
+func verifyReceipt(ctx context.Context, httpClient *http.Client, baseURL, locator string, receiptRaw []byte, submitted []byte, checkLeaf bool) error {
 	// Fetch configuration to get the log public key.
 	cfgURL := strings.TrimSuffix(baseURL, "/") + "/.well-known/transparency-configuration"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfgURL, nil)
 	if err != nil {
 		return fmt.Errorf("build config request: %w", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("get config: %w", err)
 	}
@@ -219,6 +238,32 @@ func guessSBOMContentType(path string) string {
 	default:
 		return "application/sbom+json"
 	}
+}
+
+func buildTLSConfig(caPath, certPath, keyPath string) (*tls.Config, error) {
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if caPath != "" {
+		rootCAs, err := x509.SystemCertPool()
+		if err != nil {
+			rootCAs = x509.NewCertPool()
+		}
+		data, err := os.ReadFile(filepath.Clean(caPath))
+		if err != nil {
+			return nil, fmt.Errorf("read ca: %w", err)
+		}
+		if ok := rootCAs.AppendCertsFromPEM(data); !ok {
+			return nil, fmt.Errorf("failed to append CA certs")
+		}
+		cfg.RootCAs = rootCAs
+	}
+	if certPath != "" && keyPath != "" {
+		cert, err := tls.LoadX509KeyPair(filepath.Clean(certPath), filepath.Clean(keyPath))
+		if err != nil {
+			return nil, fmt.Errorf("load client cert/key: %w", err)
+		}
+		cfg.Certificates = []tls.Certificate{cert}
+	}
+	return cfg, nil
 }
 
 func equalBytes(a, b []byte) bool {

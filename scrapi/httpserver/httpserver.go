@@ -24,6 +24,8 @@ type HandlerOptions struct {
 	StmtSigner    cose.Signer
 	StmtSignerKID []byte
 	SCRAPIVersion string
+	AuthSchemes   []string
+	AuthFunc      func(*http.Request) error
 }
 
 // NewMux wires up SCRAPI-flavored routes.
@@ -68,6 +70,9 @@ func transparencyConfigHandler(opts HandlerOptions, logger *log.Logger) http.Han
 		if opts.SCRAPIVersion != "" {
 			cfg["scrapi_version"] = opts.SCRAPIVersion
 		}
+		if len(opts.AuthSchemes) > 0 {
+			cfg["auth_schemes"] = opts.AuthSchemes
+		}
 
 		payload, err := cbor.Marshal(cfg)
 		if err != nil {
@@ -86,6 +91,10 @@ func registerHandler(opts HandlerOptions, logger *log.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if err := authorize(opts, r); err != nil {
+			writeProblem(w, http.StatusUnauthorized, "unauthorized", err.Error())
 			return
 		}
 
@@ -161,6 +170,10 @@ func queryStatusHandler(opts HandlerOptions, logger *log.Logger) http.HandlerFun
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
+		if err := authorize(opts, r); err != nil {
+			writeProblem(w, http.StatusUnauthorized, "unauthorized", err.Error())
+			return
+		}
 
 		id, err := extractID(r.URL.Path, "/entries/")
 		if err != nil {
@@ -204,6 +217,10 @@ func resolveReceiptHandler(opts HandlerOptions, logger *log.Logger) http.Handler
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if err := authorize(opts, r); err != nil {
+			writeProblem(w, http.StatusUnauthorized, "unauthorized", err.Error())
 			return
 		}
 
@@ -273,4 +290,11 @@ func isSBOMContentType(ct string) bool {
 	default:
 		return false
 	}
+}
+
+func authorize(opts HandlerOptions, r *http.Request) error {
+	if opts.AuthFunc == nil {
+		return nil
+	}
+	return opts.AuthFunc(r)
 }

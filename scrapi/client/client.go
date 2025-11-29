@@ -13,6 +13,7 @@ import (
 type Client struct {
 	BaseURL    string
 	HTTPClient *http.Client
+	Token      string
 }
 
 // Register posts a COSE_Sign1 payload to /entries and returns the locator ID and receipt bytes.
@@ -36,6 +37,9 @@ func (c *Client) RegisterWithContentType(ctx context.Context, payload []byte, co
 		contentType = "application/cose"
 	}
 	req.Header.Set("Content-Type", contentType)
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
