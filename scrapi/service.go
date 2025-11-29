@@ -84,6 +84,18 @@ func (s *InMemoryTransparencyService) Register(ctx context.Context, ss SignedSta
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Idempotent: return existing receipt if the same statement digest was already registered.
+	if existing, ok := s.receipts[id]; ok {
+		s.audits = append(s.audits, AuditRecord{
+			Time:    time.Now().UTC(),
+			Event:   "register-duplicate",
+			Locator: id,
+			Status:  s.statuses[id],
+			Detail:  fmt.Sprintf("bytes=%d", len(ss.Raw)),
+		})
+		return loc, existing, nil
+	}
+
 	leaf, root, path, size := s.tree.Append(ss.Raw)
 	payload := ReceiptPayload{
 		LogID:     s.logID,
