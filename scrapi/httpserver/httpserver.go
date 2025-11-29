@@ -23,6 +23,7 @@ type HandlerOptions struct {
 	TreeType      string
 	StmtSigner    cose.Signer
 	StmtSignerKID []byte
+	SCRAPIVersion string
 }
 
 // NewMux wires up SCRAPI-flavored routes.
@@ -63,6 +64,9 @@ func transparencyConfigHandler(opts HandlerOptions, logger *log.Logger) http.Han
 		}
 		if opts.TreeType != "" {
 			cfg["tree_type"] = opts.TreeType
+		}
+		if opts.SCRAPIVersion != "" {
+			cfg["scrapi_version"] = opts.SCRAPIVersion
 		}
 
 		payload, err := cbor.Marshal(cfg)

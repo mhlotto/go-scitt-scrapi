@@ -35,6 +35,7 @@ This repository implements lightweight, Go-friendly versions of these endpoints 
 - Exposes the log public key and key ID via the well-known configuration endpoint for verification tooling.
 - Accepts SBOM submissions (CycloneDX/SPDX JSON) and can wrap them into COSE for registration.
 - Includes a Syft-powered SBOM generator under `cmd/syft-sbom`.
+- Publishes a SCRAPI version hint in the well-known configuration to model forward compatibility.
 
 ## Running the demo
 

@@ -32,6 +32,7 @@ func main() {
 		LogKeyID:      service.LogKeyID(),
 		HashAlg:       "sha-256",
 		TreeType:      "binary-merkle-v1",
+		SCRAPIVersion: "draft-ietf-scitt-scrapi-05",
 		StmtSigner:    stmtSigner,
 		StmtSignerKID: stmtKID,
 	})
