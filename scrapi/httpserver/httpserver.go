@@ -17,6 +17,10 @@ type HandlerOptions struct {
 	IssuerURL string
 	JWKSURL   string
 	Logger    *log.Logger
+	LogKeyID  []byte
+	LogPubKey []byte
+	HashAlg   string
+	TreeType  string
 }
 
 // NewMux wires up SCRAPI-flavored routes.
@@ -45,6 +49,18 @@ func transparencyConfigHandler(opts HandlerOptions, logger *log.Logger) http.Han
 		}
 		if opts.JWKSURL != "" {
 			cfg["jwks_uri"] = opts.JWKSURL
+		}
+		if len(opts.LogPubKey) > 0 {
+			cfg["log_public_key"] = opts.LogPubKey
+		}
+		if len(opts.LogKeyID) > 0 {
+			cfg["log_key_id"] = opts.LogKeyID
+		}
+		if opts.HashAlg != "" {
+			cfg["hash_alg"] = opts.HashAlg
+		}
+		if opts.TreeType != "" {
+			cfg["tree_type"] = opts.TreeType
 		}
 
 		payload, err := cbor.Marshal(cfg)

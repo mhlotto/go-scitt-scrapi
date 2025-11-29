@@ -27,11 +27,12 @@ This repository implements lightweight, Go-friendly versions of these endpoints 
 ## What this code does
 
 - Defines core SCITT-like types under `scrapi/`: `SignedStatement`, `Receipt`, `Locator`, `RegistrationStatus`, and helpers.
-- Provides an in-memory `TransparencyService` that hashes submitted COSE payloads to form locator IDs and returns a simple dummy COSE receipt.
+- Provides an in-memory `TransparencyService` that hashes submitted COSE payloads to form locator IDs and returns a signed COSE receipt containing a Merkle inclusion proof, root hash, and tree size.
 - Implements SCRAPI-style HTTP handlers in `scrapi/httpserver`.
 - Supplies a minimal client helper in `scrapi/client`.
 - Includes a runnable demo server under `cmd/scrapi-demo-server`.
 - Captures an in-memory audit trail of registrations, status checks, and receipt lookups.
+- Exposes the log public key and key ID via the well-known configuration endpoint for verification tooling.
 
 ## Running the demo
 
@@ -72,7 +73,7 @@ curl -X POST \
 
 ### 3) Observe the response
 
-Both methods return a locator ID (used to query `/entries/{id}`) and a dummy receipt. The demo issues receipts synchronously for simplicity.
+Both methods return a locator ID (used to query `/entries/{id}`) and a signed receipt. The receipt payload carries a Merkle inclusion proof, root hash, and tree size; the COSE envelope is signed with the demo log key (Ed25519).
 
 ### Audit logging
 

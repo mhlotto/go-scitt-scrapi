@@ -14,6 +14,16 @@ type Receipt struct {
 	Msg *cose.Sign1Message
 }
 
+// ReceiptPayload describes the signed content inside a receipt.
+type ReceiptPayload struct {
+	LogID     string      `cbor:"log_id,omitempty"`
+	LeafHash  []byte      `cbor:"leaf"`
+	RootHash  []byte      `cbor:"root"`
+	TreeSize  uint64      `cbor:"size"`
+	Path      []ProofNode `cbor:"path"`
+	Timestamp int64       `cbor:"ts"`
+}
+
 // RegistrationStatus tracks the state of a registration.
 type RegistrationStatus string
 

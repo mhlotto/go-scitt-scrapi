@@ -2,6 +2,8 @@ package scrapi
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -36,14 +38,33 @@ type InMemoryTransparencyService struct {
 	receipts   map[string]*Receipt
 	statuses   map[string]RegistrationStatus
 	audits     []AuditRecord
+	tree       *MerkleTree
+	signer     cose.Signer
+	pubKey     ed25519.PublicKey
+	keyID      []byte
+	logID      string
 }
 
 // NewInMemoryTransparencyService constructs an empty in-memory service.
 func NewInMemoryTransparencyService() *InMemoryTransparencyService {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		panic(fmt.Errorf("generate ed25519 key: %w", err))
+	}
+	signer, err := cose.NewSigner(cose.AlgorithmEdDSA, priv)
+	if err != nil {
+		panic(fmt.Errorf("create signer: %w", err))
+	}
+
 	return &InMemoryTransparencyService{
 		statements: make(map[string]SignedStatement),
 		receipts:   make(map[string]*Receipt),
 		statuses:   make(map[string]RegistrationStatus),
+		tree:       &MerkleTree{},
+		signer:     signer,
+		pubKey:     pub,
+		keyID:      []byte("demo-log-key"),
+		logID:      "demo-log",
 		audits:     make([]AuditRecord, 0, 32),
 	}
 }
@@ -60,20 +81,39 @@ func (s *InMemoryTransparencyService) Register(ctx context.Context, ss SignedSta
 	id := hex.EncodeToString(digest[:])
 	loc := Locator{ID: id}
 
-	receiptMsg := cose.Sign1Message{
-		Payload: digest[:],
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	leaf, root, path, size := s.tree.Append(ss.Raw)
+	payload := ReceiptPayload{
+		LogID:     s.logID,
+		LeafHash:  leaf,
+		RootHash:  root,
+		TreeSize:  uint64(size),
+		Path:      path,
+		Timestamp: time.Now().UTC().Unix(),
 	}
-	receiptRaw, err := cbor.Marshal(receiptMsg)
+	payloadRaw, err := cbor.Marshal(payload)
+	if err != nil {
+		return loc, nil, fmt.Errorf("marshal receipt payload: %w", err)
+	}
+
+	receiptMsg := cose.NewSign1Message()
+	receiptMsg.Payload = payloadRaw
+	receiptMsg.Headers.Protected.SetAlgorithm(cose.AlgorithmEdDSA)
+	receiptMsg.Headers.Unprotected[cose.HeaderLabelKeyID] = s.keyID
+	if err := receiptMsg.Sign(rand.Reader, nil, s.signer); err != nil {
+		return loc, nil, fmt.Errorf("sign receipt: %w", err)
+	}
+	receiptRaw, err := receiptMsg.MarshalCBOR()
 	if err != nil {
 		return loc, nil, fmt.Errorf("marshal receipt: %w", err)
 	}
 	receipt := &Receipt{
 		Raw: receiptRaw,
-		Msg: &receiptMsg,
+		Msg: receiptMsg,
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.statements[id] = ss
 	s.receipts[id] = receipt
 	s.statuses[id] = StatusSuccess
@@ -140,4 +180,19 @@ func (s *InMemoryTransparencyService) AuditTrail() []AuditRecord {
 	out := make([]AuditRecord, len(s.audits))
 	copy(out, s.audits)
 	return out
+}
+
+// LogPublicKey returns the Ed25519 public key used to sign receipts.
+func (s *InMemoryTransparencyService) LogPublicKey() ed25519.PublicKey {
+	return append(ed25519.PublicKey{}, s.pubKey...)
+}
+
+// LogKeyID returns the COSE key identifier used in receipts.
+func (s *InMemoryTransparencyService) LogKeyID() []byte {
+	return append([]byte{}, s.keyID...)
+}
+
+// LogID returns the logical log identifier for receipts.
+func (s *InMemoryTransparencyService) LogID() string {
+	return s.logID
 }
