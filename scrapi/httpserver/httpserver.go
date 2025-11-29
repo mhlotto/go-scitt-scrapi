@@ -97,6 +97,12 @@ func registerHandler(opts HandlerOptions, logger *log.Logger) http.HandlerFunc {
 		}
 		defer r.Body.Close()
 
+		const maxBody = 50 << 20 // 50 MiB guard for the demo
+		if len(body) > maxBody {
+			writeProblem(w, http.StatusRequestEntityTooLarge, "payload too large", "limit 50MiB for demo")
+			return
+		}
+
 		ct := r.Header.Get("Content-Type")
 		var ss scrapi.SignedStatement
 
@@ -240,9 +246,10 @@ func writeProblem(w http.ResponseWriter, status int, title, detail string) {
 	w.Header().Set("Content-Type", "application/concise-problem-details+cbor")
 	w.WriteHeader(status)
 
-	payload := map[int]string{
+	payload := map[int]any{
 		-1: title,
 		-2: detail,
+		-3: status,
 	}
 	data, err := cbor.Marshal(payload)
 	if err != nil {

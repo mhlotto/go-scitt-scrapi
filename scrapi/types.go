@@ -44,4 +44,6 @@ type ProblemDetails struct {
 	Type   string `json:"type,omitempty"`
 	Title  string `json:"title,omitempty"`
 	Detail string `json:"detail,omitempty"`
+	Status int    `json:"status,omitempty"`
+	Instance string `json:"instance,omitempty"`
 }
