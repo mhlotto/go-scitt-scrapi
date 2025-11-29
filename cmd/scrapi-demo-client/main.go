@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -50,7 +51,7 @@ func main() {
 	}
 
 	if *out != "" && len(receipt) > 0 {
-		if err := os.WriteFile(*out, receipt, 0644); err != nil {
+		if err := os.WriteFile(*out, receipt, 0600); err != nil {
 			log.Fatalf("write receipt: %v", err)
 		}
 		fmt.Printf("Receipt written to %s\n", *out)
@@ -61,10 +62,10 @@ func main() {
 func loadPayload(cosePath, sbomPath, vexPath, msg string, wrapSBOM bool, checkLeaf bool) ([]byte, string, bool, error) {
 	switch {
 	case cosePath != "":
-		data, err := os.ReadFile(cosePath)
+		data, err := os.ReadFile(filepath.Clean(cosePath))
 		return data, "application/cose", checkLeaf, err
 	case vexPath != "":
-		data, err := os.ReadFile(vexPath)
+		data, err := os.ReadFile(filepath.Clean(vexPath))
 		if err != nil {
 			return nil, "", checkLeaf, err
 		}
@@ -78,7 +79,7 @@ func loadPayload(cosePath, sbomPath, vexPath, msg string, wrapSBOM bool, checkLe
 		}
 		return ss.Raw, "application/cose", checkLeaf, nil
 	case sbomPath != "":
-		data, err := os.ReadFile(sbomPath)
+		data, err := os.ReadFile(filepath.Clean(sbomPath))
 		if err != nil {
 			return nil, "", checkLeaf, err
 		}

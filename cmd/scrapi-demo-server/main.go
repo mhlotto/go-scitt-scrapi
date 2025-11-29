@@ -39,8 +39,17 @@ func main() {
 		StmtSignerKID: stmtKID,
 	})
 
+	srv := &http.Server{
+		Addr:              *addr,
+		Handler:          mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
 	log.Printf("starting SCRAPI demo server on %s", *addr)
-	if err := http.ListenAndServe(*addr, mux); err != nil {
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
 }

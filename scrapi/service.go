@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -125,11 +126,15 @@ func (s *InMemoryTransparencyService) Register(ctx context.Context, ss SignedSta
 	}
 
 	leaf, root, path, size := s.tree.Append(ss.Raw)
+	sizeUint, err := safeUint64(size)
+	if err != nil {
+		return Locator{}, nil, err
+	}
 	payload := ReceiptPayload{
 		LogID:     s.logID,
 		LeafHash:  leaf,
 		RootHash:  root,
-		TreeSize:  uint64(size),
+		TreeSize:  sizeUint,
 		Path:      path,
 		Timestamp: time.Now().UTC().Unix(),
 	}
@@ -226,11 +231,15 @@ func (s *InMemoryTransparencyService) completeAsync(id string) {
 	}
 
 	leaf, root, path, size := s.tree.Append(ss.Raw)
+	sizeUint, err := safeUint64(size)
+	if err != nil {
+		return
+	}
 	payload := ReceiptPayload{
 		LogID:     s.logID,
 		LeafHash:  leaf,
 		RootHash:  root,
-		TreeSize:  uint64(size),
+		TreeSize:  sizeUint,
 		Path:      path,
 		Timestamp: time.Now().UTC().Unix(),
 	}
@@ -264,6 +273,18 @@ func (s *InMemoryTransparencyService) completeAsync(id string) {
 		Status:  StatusSuccess,
 		Detail:  fmt.Sprintf("bytes=%d", len(ss.Raw)),
 	})
+}
+
+func safeUint64(v int) (uint64, error) {
+	if v < 0 {
+		return 0, fmt.Errorf("negative size: %d", v)
+	}
+	// int is smaller or equal to the machine word; this guard prevents overflow when converting to uint64.
+	// #nosec G115
+	if uint64(v) > math.MaxUint64 {
+		return 0, fmt.Errorf("size too large: %d", v)
+	}
+	return uint64(v), nil
 }
 
 // AuditTrail returns a copy of the collected audit records.

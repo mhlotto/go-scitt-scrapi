@@ -47,7 +47,7 @@ func main() {
 		fmt.Print(string(data))
 		return
 	}
-	if err := os.WriteFile(*out, data, 0644); err != nil {
+	if err := os.WriteFile(*out, data, 0600); err != nil {
 		log.Fatalf("write sbom: %v", err)
 	}
 	fmt.Printf("SBOM written to %s\n", *out)
