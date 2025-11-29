@@ -23,6 +23,7 @@ func main() {
 	file := flag.String("file", "", "path to a COSE_Sign1 payload to submit (optional)")
 	out := flag.String("out", "", "path to write the returned receipt (optional)")
 	message := flag.String("message", "hello from scrapi-client", "payload to embed in a generated COSE_Sign1 when no file is provided")
+	expectLeaf := flag.Bool("check-leaf", true, "check receipt leaf hash matches submitted payload hash")
 	flag.Parse()
 
 	cosePayload, err := loadPayload(*file, *message)
@@ -40,7 +41,7 @@ func main() {
 	fmt.Printf("Receipt size: %d bytes\n", len(receipt))
 
 	if len(receipt) > 0 {
-		if err := verifyReceipt(context.Background(), *addr, locator, receipt); err != nil {
+		if err := verifyReceipt(context.Background(), *addr, locator, receipt, cosePayload, *expectLeaf); err != nil {
 			log.Fatalf("verify receipt: %v", err)
 		}
 	}
@@ -65,7 +66,7 @@ func loadPayload(path string, msg string) ([]byte, error) {
 	return cbor.Marshal(sign1)
 }
 
-func verifyReceipt(ctx context.Context, baseURL, locator string, receiptRaw []byte) error {
+func verifyReceipt(ctx context.Context, baseURL, locator string, receiptRaw []byte, submitted []byte, checkLeaf bool) error {
 	// Fetch configuration to get the log public key.
 	cfgURL := strings.TrimSuffix(baseURL, "/") + "/.well-known/transparency-configuration"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfgURL, nil)
@@ -124,12 +125,14 @@ func verifyReceipt(ctx context.Context, baseURL, locator string, receiptRaw []by
 	}
 	fmt.Println("  merkle proof: ok")
 
-	// Optionally compare leaf hash with local digest of submitted payload.
-	digest := merkleLeafHashFromPayload(payload.LeafHash)
-	if digest != "" {
-		_ = digest
+	if checkLeaf {
+		localLeaf := scrapiMerkleLeaf(submitted)
+		if !equalBytes(localLeaf, payload.LeafHash) {
+			return fmt.Errorf("leaf hash mismatch: local %x receipt %x", localLeaf, payload.LeafHash)
+		}
+		fmt.Println("  leaf hash matches submitted statement")
 	}
-	_ = locator
+
 	return nil
 }
 
@@ -160,11 +163,11 @@ func scrapiMerkleNode(left, right []byte) []byte {
 	return h.Sum(nil)
 }
 
-func merkleLeafHashFromPayload(leaf []byte) string {
-	// Helper placeholder to show where to compare the leaf hash to a locally
-	// computed digest of the submitted statement; not used directly here.
-	_ = leaf
-	return ""
+func scrapiMerkleLeaf(data []byte) []byte {
+	h := sha256.New()
+	h.Write([]byte{0x00})
+	h.Write(data)
+	return h.Sum(nil)
 }
 
 func equalBytes(a, b []byte) bool {
