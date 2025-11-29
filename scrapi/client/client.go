@@ -1,0 +1,59 @@
+package client
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+)
+
+// Client is a helper for calling the SCRAPI demo server.
+type Client struct {
+	BaseURL    string
+	HTTPClient *http.Client
+}
+
+// Register posts a COSE_Sign1 payload to /entries and returns the locator ID and receipt bytes.
+func (c *Client) Register(ctx context.Context, cosePayload []byte) (string, []byte, error) {
+	client := c.HTTPClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	endpoint := strings.TrimSuffix(c.BaseURL, "/") + "/entries"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(cosePayload))
+	if err != nil {
+		return "", nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/cose")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", nil, fmt.Errorf("POST entries: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusSeeOther {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return "", nil, fmt.Errorf("unexpected status %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	location := resp.Header.Get("Location")
+	if location == "" {
+		return "", nil, fmt.Errorf("missing Location header")
+	}
+	locParts := strings.Split(strings.TrimSuffix(location, "/"), "/")
+	locator := locParts[len(locParts)-1]
+
+	var receipt []byte
+	if resp.StatusCode == http.StatusCreated {
+		receipt, err = io.ReadAll(resp.Body)
+		if err != nil {
+			return "", nil, fmt.Errorf("read receipt: %w", err)
+		}
+	}
+
+	return locator, receipt, nil
+}
