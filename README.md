@@ -96,6 +96,33 @@ Both methods return a locator ID (used to query `/entries/{id}`) and a signed re
 - A sample CycloneDX SBOM is available at `fixtures/sbom/sample-cyclonedx.json`.
 - Bigger picture: SCITT receipts make SBOM sharing tamper-evident and time-bound. A producer can publish an SBOM with a receipt, and consumers can verify the receipt (signature and Merkle proof) to ensure the SBOM is exactly what was registered, when it was registered, and anchored to a log root. Pairing SBOMs with receipts helps downstream scanners, auditors, and deploy pipelines trust that the SBOM they ingest hasn’t been swapped or modified in transit.
 
+## End-to-end SBOM + dependency-check demo
+
+1) Generate an SBOM for a target:
+   ```bash
+   go run ./cmd/syft-sbom -source . -out sbom.json
+   ```
+2) Register the SBOM and get a receipt (signed COSE with Merkle proof):
+   ```bash
+   go run ./cmd/scrapi-demo-client -addr http://localhost:8080 -sbom sbom.json -wrap-sbom=true
+   ```
+   The client verifies the receipt signature, proof, and leaf hash against the SBOM bytes.
+3) Run a vulnerability scan with OWASP Dependency-Check against the same project or SBOM (example):
+   ```bash
+   dependency-check --project demo --scan . --format JSON --out dc-report.json
+   ```
+   (If your dependency-check setup differs, adjust paths/flags accordingly.)
+4) Register the scan result as a second statement (raw JSON or wrap it into COSE similarly):
+   ```bash
+   go run ./cmd/scrapi-demo-client -addr http://localhost:8080 -file dc-report.cose
+   ```
+   or:
+   ```bash
+   go run ./cmd/scrapi-demo-client -addr http://localhost:8080 -file dc-report.json -wrap-sbom=false
+   ```
+   Include metadata in your scan payload (e.g., the SBOM digest or locator) so consumers can link scan → SBOM.
+5) Consumers retrieve receipts for both SBOM and scan, verify signatures and Merkle proofs, and check that the scan references the expected SBOM digest/locator. This creates an auditable chain: SBOM → scan result, both anchored in a transparency log.
+
 ## Other ways to build a SCITT service
 
 - Use a Merkle-tree-backed append-only log so receipts carry inclusion proofs.
