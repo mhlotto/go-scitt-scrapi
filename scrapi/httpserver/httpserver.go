@@ -3,6 +3,7 @@ package httpserver
 import (
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 
@@ -15,19 +16,24 @@ type HandlerOptions struct {
 	Service   scrapi.TransparencyService
 	IssuerURL string
 	JWKSURL   string
+	Logger    *log.Logger
 }
 
 // NewMux wires up SCRAPI-flavored routes.
 func NewMux(opts HandlerOptions) http.Handler {
+	logger := opts.Logger
+	if logger == nil {
+		logger = log.Default()
+	}
 	mux := http.NewServeMux()
-	mux.Handle("/.well-known/transparency-configuration", transparencyConfigHandler(opts))
-	mux.Handle("/entries", registerHandler(opts))
-	mux.Handle("/entries/", queryStatusHandler(opts))
-	mux.Handle("/receipts/", resolveReceiptHandler(opts))
+	mux.Handle("/.well-known/transparency-configuration", transparencyConfigHandler(opts, logger))
+	mux.Handle("/entries", registerHandler(opts, logger))
+	mux.Handle("/entries/", queryStatusHandler(opts, logger))
+	mux.Handle("/receipts/", resolveReceiptHandler(opts, logger))
 	return mux
 }
 
-func transparencyConfigHandler(opts HandlerOptions) http.HandlerFunc {
+func transparencyConfigHandler(opts HandlerOptions, logger *log.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -43,6 +49,7 @@ func transparencyConfigHandler(opts HandlerOptions) http.HandlerFunc {
 
 		payload, err := cbor.Marshal(cfg)
 		if err != nil {
+			logger.Printf("config encode error: %v", err)
 			writeProblem(w, http.StatusInternalServerError, "encode configuration", err.Error())
 			return
 		}
@@ -53,7 +60,7 @@ func transparencyConfigHandler(opts HandlerOptions) http.HandlerFunc {
 	}
 }
 
-func registerHandler(opts HandlerOptions) http.HandlerFunc {
+func registerHandler(opts HandlerOptions, logger *log.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -66,6 +73,7 @@ func registerHandler(opts HandlerOptions) http.HandlerFunc {
 
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
+			logger.Printf("register read error: %v", err)
 			writeProblem(w, http.StatusBadRequest, "read body", err.Error())
 			return
 		}
@@ -73,6 +81,7 @@ func registerHandler(opts HandlerOptions) http.HandlerFunc {
 
 		var msg cose.Sign1Message
 		if err := cbor.Unmarshal(body, &msg); err != nil {
+			logger.Printf("register unmarshal error: %v", err)
 			writeProblem(w, http.StatusBadRequest, "parse COSE_Sign1", err.Error())
 			return
 		}
@@ -82,9 +91,12 @@ func registerHandler(opts HandlerOptions) http.HandlerFunc {
 			Msg: &msg,
 		})
 		if err != nil {
+			logger.Printf("registration failed: %v", err)
 			writeProblem(w, http.StatusBadRequest, "registration failed", err.Error())
 			return
 		}
+
+		logger.Printf("registered statement id=%s bytes=%d", loc.ID, len(body))
 
 		location := "/entries/" + loc.ID
 		w.Header().Set("Location", location)
@@ -100,7 +112,7 @@ func registerHandler(opts HandlerOptions) http.HandlerFunc {
 	}
 }
 
-func queryStatusHandler(opts HandlerOptions) http.HandlerFunc {
+func queryStatusHandler(opts HandlerOptions, logger *log.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -115,6 +127,7 @@ func queryStatusHandler(opts HandlerOptions) http.HandlerFunc {
 
 		status, receipt, err := opts.Service.QueryStatus(r.Context(), scrapi.Locator{ID: id})
 		if err != nil {
+			logger.Printf("status lookup failed id=%s: %v", id, err)
 			writeProblem(w, http.StatusNotFound, "lookup failed", err.Error())
 			return
 		}
@@ -123,23 +136,28 @@ func queryStatusHandler(opts HandlerOptions) http.HandlerFunc {
 		case scrapi.StatusPending:
 			w.Header().Set("Location", "/entries/"+id)
 			w.WriteHeader(http.StatusAccepted)
+			logger.Printf("status pending id=%s", id)
 		case scrapi.StatusFailed:
 			writeProblem(w, http.StatusConflict, "registration failed", "the statement could not be included")
+			logger.Printf("status failed id=%s", id)
 		case scrapi.StatusSuccess:
 			if receipt == nil {
 				w.WriteHeader(http.StatusNoContent)
+				logger.Printf("status success id=%s no receipt", id)
 				return
 			}
 			w.Header().Set("Content-Type", "application/cose")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(receipt.Raw)
+			logger.Printf("status success id=%s receipt-bytes=%d", id, len(receipt.Raw))
 		default:
 			writeProblem(w, http.StatusInternalServerError, "unknown status", string(status))
+			logger.Printf("status unknown id=%s status=%s", id, status)
 		}
 	}
 }
 
-func resolveReceiptHandler(opts HandlerOptions) http.HandlerFunc {
+func resolveReceiptHandler(opts HandlerOptions, logger *log.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -155,12 +173,14 @@ func resolveReceiptHandler(opts HandlerOptions) http.HandlerFunc {
 		receipt, err := opts.Service.ResolveReceipt(r.Context(), id)
 		if err != nil || receipt == nil {
 			writeProblem(w, http.StatusNotFound, "receipt not found", "no receipt with that id")
+			logger.Printf("receipt not found id=%s: %v", id, err)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/cose")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(receipt.Raw)
+		logger.Printf("receipt resolved id=%s bytes=%d", id, len(receipt.Raw))
 	}
 }
 

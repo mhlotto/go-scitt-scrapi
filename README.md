@@ -31,6 +31,7 @@ This repository implements lightweight, Go-friendly versions of these endpoints 
 - Implements SCRAPI-style HTTP handlers in `scrapi/httpserver`.
 - Supplies a minimal client helper in `scrapi/client`.
 - Includes a runnable demo server under `cmd/scrapi-demo-server`.
+- Captures an in-memory audit trail of registrations, status checks, and receipt lookups.
 
 ## Running the demo
 
@@ -72,6 +73,11 @@ curl -X POST \
 ### 3) Observe the response
 
 Both methods return a locator ID (used to query `/entries/{id}`) and a dummy receipt. The demo issues receipts synchronously for simplicity.
+
+### Audit logging
+
+- The server prints audit-friendly log lines for registrations, status queries, and receipt fetches.
+- The in-memory service retains an audit trail in memory; `(*scrapi.InMemoryTransparencyService).AuditTrail()` returns a copy for inspection in tests or additional tooling.
 
 ## Other ways to build a SCITT service
 
