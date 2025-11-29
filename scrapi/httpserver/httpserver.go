@@ -266,6 +266,10 @@ func isSBOMContentType(ct string) bool {
 		return true
 	case strings.HasPrefix(ct, "application/spdx+json"):
 		return true
+	case strings.HasPrefix(ct, "application/vnd.csaf+json"):
+		return true
+	case strings.HasPrefix(ct, "application/vnd.openvex+json"):
+		return true
 	default:
 		return false
 	}

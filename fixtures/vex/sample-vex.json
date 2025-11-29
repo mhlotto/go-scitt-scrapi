@@ -1,0 +1,8 @@
+{
+  "vulnerability": "CVE-2024-0001",
+  "product": "demo-app",
+  "version": "1.0.0",
+  "status": "not_affected",
+  "justification": "Vulnerable code not present in shipped binaries",
+  "timestamp": "2024-01-01T00:00:00Z"
+}

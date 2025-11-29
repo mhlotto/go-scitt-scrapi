@@ -23,12 +23,13 @@ func main() {
 	file := flag.String("file", "", "path to a COSE_Sign1 payload to submit (optional)")
 	sbom := flag.String("sbom", "", "path to an SBOM (CycloneDX/SPDX JSON) to submit")
 	wrapSBOM := flag.Bool("wrap-sbom", true, "wrap SBOM bytes into a COSE_Sign1 before sending")
+	vex := flag.String("vex", "", "path to a VEX/CSAF-like advisory JSON to submit")
 	out := flag.String("out", "", "path to write the returned receipt (optional)")
 	message := flag.String("message", "hello from scrapi-client", "payload to embed in a generated COSE_Sign1 when no file is provided")
 	expectLeaf := flag.Bool("check-leaf", true, "check receipt leaf hash matches submitted payload hash")
 	flag.Parse()
 
-	payload, contentType, checkLeaf, err := loadPayload(*file, *sbom, *message, *wrapSBOM, *expectLeaf)
+	payload, contentType, checkLeaf, err := loadPayload(*file, *sbom, *vex, *message, *wrapSBOM, *expectLeaf)
 	if err != nil {
 		log.Fatalf("prepare payload: %v", err)
 	}
@@ -57,11 +58,25 @@ func main() {
 }
 
 // loadPayload returns the bytes to submit, content type, and whether to check leaf hash.
-func loadPayload(cosePath, sbomPath, msg string, wrapSBOM bool, checkLeaf bool) ([]byte, string, bool, error) {
+func loadPayload(cosePath, sbomPath, vexPath, msg string, wrapSBOM bool, checkLeaf bool) ([]byte, string, bool, error) {
 	switch {
 	case cosePath != "":
 		data, err := os.ReadFile(cosePath)
 		return data, "application/cose", checkLeaf, err
+	case vexPath != "":
+		data, err := os.ReadFile(vexPath)
+		if err != nil {
+			return nil, "", checkLeaf, err
+		}
+		signer, _, kid, err := scrapi.NewEd25519Signer("vex-demo-key")
+		if err != nil {
+			return nil, "", checkLeaf, err
+		}
+		ss, err := scrapi.WrapPayloadAsCOSE(data, signer, kid)
+		if err != nil {
+			return nil, "", checkLeaf, err
+		}
+		return ss.Raw, "application/cose", checkLeaf, nil
 	case sbomPath != "":
 		data, err := os.ReadFile(sbomPath)
 		if err != nil {

@@ -65,6 +65,7 @@ Flags:
 - `-message "text"` to change the payload used for the generated COSE_Sign1.
 - `-out receipt.cose` to write the returned receipt to a file.
 - `-sbom fixtures/sbom/sample-cyclonedx.json` to send an SBOM; `-wrap-sbom=false` sends raw SBOM (server wraps), `-wrap-sbom=true` signs locally and sends COSE.
+- `-vex fixtures/vex/sample-vex.json` to send a VEX/CSAF-style advisory (wrapped and signed locally).
 
 ### 2b) Register with curl (if you already have a COSE_Sign1 blob)
 
@@ -95,6 +96,7 @@ Both methods return a locator ID (used to query `/entries/{id}`) and a signed re
   go run ./cmd/scrapi-demo-client -addr http://localhost:8080 -sbom sbom.json -wrap-sbom=true
   ```
 - A sample CycloneDX SBOM is available at `fixtures/sbom/sample-cyclonedx.json`.
+- A sample VEX/CSAF advisory is available at `fixtures/vex/sample-vex.json` (use `-vex ...` with the demo client).
 - Bigger picture: SCITT receipts make SBOM sharing tamper-evident and time-bound. A producer can publish an SBOM with a receipt, and consumers can verify the receipt (signature and Merkle proof) to ensure the SBOM is exactly what was registered, when it was registered, and anchored to a log root. Pairing SBOMs with receipts helps downstream scanners, auditors, and deploy pipelines trust that the SBOM they ingest hasn’t been swapped or modified in transit.
 
 ## End-to-end SBOM + dependency-check demo
