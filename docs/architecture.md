@@ -4,18 +4,18 @@ This page situates the demo against SCITT/SCRAPI and sketches the message shapes
 
 ## Flow at a glance (ASCII)
 ```
-Producer (signs SBOM)          SCRAPI service (Go demo)           Verifier (Dependency-Check)
-------------------------       --------------------------         ----------------------------
+Producer (signs SBOM)          SCRAPI service (Go demo)           Analyzer/Verifier (Dependency-Track)
+------------------------       --------------------------         ------------------------------------
 SBOM bytes --COSE_Sign1-->     POST /entries (COSE)      \
                                 -> locator id              \
                                                            -> Signed receipt (COSE_Sign1)
                                    /.well-known/transparency-configuration (log key/id)
 
-Verification:
-- SBOM COSE verified with producer key (kid/alg)
-- Receipt COSE verified with log key
-- Merkle proof checks leaf (0x00||SHA-256(SBOM)) up to root
-- log_id/log_key_id, hash_alg, version checked
+Verification (or ingest):
+- SBOM COSE verified with producer key (kid/alg) before using it.
+- Receipt COSE verified with log key; Merkle proof checks leaf (0x00||SHA-256(SBOM)) up to root.
+- log_id/log_key_id, hash_alg, version checked.
+- Dependency-Track ingests the same SBOM while the SCRAPI receipt proves its integrity.
 ```
 
 ## Sequence (registration → polling → receipt fetch)
@@ -80,10 +80,24 @@ Verifier steps:
 - Leaf: `0x00 || SHA-256(payload)`
 - Node: `0x01 || left || right`
 
+## Timeline (high level)
+- t0: Producer generates SBOM (CycloneDX/SPDX) and signs it (COSE_Sign1 with alg/kid).
+- t1: Producer registers the signed SBOM with SCRAPI `/entries`; receives locator and (ideally) a signed receipt.
+- t2: If receipt not returned immediately, producer polls `/entries/{id}` or `/receipts/{id}` until available.
+- t3: Producer (or pipeline) publishes SBOM + receipt + locator to consumers.
+- t4: Consumer/verifier fetches transparency configuration (or uses pinned log key/id).
+- t5: Consumer/verifier validates SBOM signature (producer key), receipt signature (log key), and Merkle proof.
+- t6: Security auditor or CI pipeline scans using the verified SBOM, checks receipts for provenance/timeliness.
+- t7: Auditor (or pipeline) produces a scan report that references the SBOM/locator, signs it (COSE) to assert authorship, and prepares it for registration. This binds “who found these findings” to “which SBOM was examined.”
+- t8: Auditor registers the signed scan report with SCRAPI `/entries`, receives a scan locator and receipt. Now the findings themselves are transparency-backed and cannot be silently swapped without detection.
+- t9: Auditor delivers scan report + scan receipt + scan locator back to the producer (or downstream stakeholders). This lets the producer prove “these are exactly the findings the auditor logged.”
+- t10: Producer (or any verifier) validates the scan report and receipt exactly like the SBOM: check report signature (auditor identity), receipt signature (log key), Merkle proof, and log key/id pins. This ensures the report is authentic and anchored.
+- t11: Optional: Producer re-publishes SBOM + scan + both receipts as a bundle for downstream consumers, enabling end-to-end traceability (origin SBOM and subsequent audit findings both anchored in the log).
+
 ## Alignment to SCRAPI/SCITT drafts
 - Endpoints: `/.well-known/transparency-configuration`, `/entries`, `/entries/{id}`, `/receipts/{id}`.
 - Configuration fields: `log_public_key`, `log_key_id`, `hash_alg`, `scrapi_version`, `tree_type`.
-- Receipt checks: inclusion proof + log key binding, version/hash checks (strict mode in Dependency-Check enforces).
+- Receipt checks: inclusion proof + log key binding, version/hash checks (the demo client enforces these before upload to Dependency-Track).
 
 ## Trust model in the demo
 - Log key: Ed25519, surfaced via well-known; can be pinned by clients.

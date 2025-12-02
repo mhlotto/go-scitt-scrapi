@@ -132,7 +132,7 @@ go run ./cmd/scrapi-demo-client -addr https://localhost:8443 -token secret \
   -sbom fixtures/sbom/sample-cyclonedx.json
 ```
 
-## End-to-end SBOM + dependency-check demo
+## End-to-end SBOM + Dependency-Track demo
 
 1) Generate an SBOM for a target:
    ```bash
@@ -140,24 +140,24 @@ go run ./cmd/scrapi-demo-client -addr https://localhost:8443 -token secret \
    ```
 2) Register the SBOM and get a receipt (signed COSE with Merkle proof):
    ```bash
-   go run ./cmd/scrapi-demo-client -addr http://localhost:8080 -sbom sbom.json -wrap-sbom=true
+   go run ./cmd/scrapi-demo-client -addr http://localhost:8080 -sbom sbom.json -wrap-sbom=true \
+     -out /tmp/demo-receipt.cose -log-key-pem /tmp/log-public-key.pem
    ```
    The client verifies the receipt signature, proof, and leaf hash against the SBOM bytes.
-3) Run a vulnerability scan with OWASP Dependency-Check against the same project or SBOM (example):
+3) Upload the same SBOM to Dependency-Track (API server running locally with an API key):
    ```bash
-   dependency-check --project demo --scan . --format JSON --out dc-report.json
+   go run ./cmd/scrapi-demo-client \
+     -addr http://localhost:8080 \
+     -sbom sbom.json \
+     -wrap-sbom=true \
+     -dtrack-url http://localhost:8081 \
+     -dtrack-api-key <your-api-key> \
+     -dtrack-project "scrapi-demo" \
+     -dtrack-version "1.0.0" \
+     -dtrack-auto-create
    ```
-   (If your dependency-check setup differs, adjust paths/flags accordingly.)
-4) Register the scan result as a second statement (raw JSON or wrap it into COSE similarly):
-   ```bash
-   go run ./cmd/scrapi-demo-client -addr http://localhost:8080 -file dc-report.cose
-   ```
-   or:
-   ```bash
-   go run ./cmd/scrapi-demo-client -addr http://localhost:8080 -file dc-report.json -wrap-sbom=false
-   ```
-   Include metadata in your scan payload (e.g., the SBOM digest or locator) so consumers can link scan → SBOM.
-5) Consumers retrieve receipts for both SBOM and scan, verify signatures and Merkle proofs, and check that the scan references the expected SBOM digest/locator. This creates an auditable chain: SBOM → scan result, both anchored in a transparency log.
+4) Export findings from Dependency-Track (UI/API), sign them into COSE_Sign1 (auditor key/kid), and register the findings JSON with SCRAPI to anchor the scan results.
+5) Consumers retrieve receipts for both SBOM and findings, verify signatures and Merkle proofs, and check that the findings reference the expected SBOM hash/locator. This creates an auditable chain: SBOM → scan result, both anchored in a transparency log.
 
 ## Other ways to build a SCITT service
 

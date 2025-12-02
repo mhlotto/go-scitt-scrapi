@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -12,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -44,6 +46,12 @@ func main() {
 	fetchReceipts := flag.Bool("fetch-receipts", false, "fetch /receipts/{id} after registration")
 	configOut := flag.String("config-out", "", "path to write fetched transparency configuration (CBOR)")
 	logKeyOut := flag.String("log-key-pem", "", "path to write log_public_key as PEM")
+	dtrackURL := flag.String("dtrack-url", "", "Dependency-Track API base URL (optional). When set, the SBOM is also uploaded to Dependency-Track.")
+	dtrackAPIKey := flag.String("dtrack-api-key", "", "Dependency-Track API key with BOM_UPLOAD permission")
+	dtrackProject := flag.String("dtrack-project", "", "Dependency-Track project name (required if no project UUID)")
+	dtrackVersion := flag.String("dtrack-version", "", "Dependency-Track project version (required if no project UUID)")
+	dtrackProjectUUID := flag.String("dtrack-project-uuid", "", "Dependency-Track project UUID (optional alternative to name/version)")
+	dtrackAutoCreate := flag.Bool("dtrack-auto-create", false, "Allow Dependency-Track to auto-create the project when name/version are used")
 	flag.Parse()
 
 	payload, contentType, checkLeaf, err := loadPayload(*file, *sbom, *vex, *message, *wrapSBOM, *expectLeaf)
@@ -111,6 +119,12 @@ func main() {
 			log.Fatalf("write receipt: %v", err)
 		}
 		fmt.Printf("Receipt written to %s\n", *out)
+	}
+
+	if *dtrackURL != "" {
+		if err := uploadToDependencyTrack(ctx, httpClient, *dtrackURL, *dtrackAPIKey, *sbom, *dtrackProjectUUID, *dtrackProject, *dtrackVersion, *dtrackAutoCreate); err != nil {
+			log.Fatalf("upload to dependency-track: %v", err)
+		}
 	}
 }
 
@@ -370,5 +384,100 @@ func fetchAndPersistConfig(ctx context.Context, httpClient *http.Client, baseURL
 		}
 		fmt.Printf("Log public key written to %s\n", logKeyPath)
 	}
+	return nil
+}
+
+// uploadToDependencyTrack pushes a CycloneDX SBOM to Dependency-Track using the /api/v1/bom endpoint.
+func uploadToDependencyTrack(ctx context.Context, httpClient *http.Client, baseURL, apiKey, sbomPath, projectUUID, projectName, projectVersion string, autoCreate bool) error {
+	if baseURL == "" {
+		return fmt.Errorf("dtrack-url is required")
+	}
+	if apiKey == "" {
+		return fmt.Errorf("dtrack-api-key is required")
+	}
+	if sbomPath == "" {
+		return fmt.Errorf("sbom path is required when uploading to Dependency-Track")
+	}
+	if projectUUID == "" && (projectName == "" || projectVersion == "") {
+		return fmt.Errorf("either dtrack-project-uuid or both dtrack-project and dtrack-version are required")
+	}
+
+	file, err := os.Open(filepath.Clean(sbomPath))
+	if err != nil {
+		return fmt.Errorf("open sbom: %w", err)
+	}
+	defer file.Close()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	if projectUUID != "" {
+		if err := writer.WriteField("project", projectUUID); err != nil {
+			return fmt.Errorf("write project field: %w", err)
+		}
+	} else {
+		if err := writer.WriteField("projectName", projectName); err != nil {
+			return fmt.Errorf("write projectName: %w", err)
+		}
+		if err := writer.WriteField("projectVersion", projectVersion); err != nil {
+			return fmt.Errorf("write projectVersion: %w", err)
+		}
+		if autoCreate {
+			if err := writer.WriteField("autoCreate", "true"); err != nil {
+				return fmt.Errorf("write autoCreate: %w", err)
+			}
+		}
+	}
+
+	part, err := writer.CreateFormFile("bom", filepath.Base(sbomPath))
+	if err != nil {
+		return fmt.Errorf("create bom part: %w", err)
+	}
+	if _, err := io.Copy(part, file); err != nil {
+		return fmt.Errorf("copy bom: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("close multipart: %w", err)
+	}
+
+	uploadURL := strings.TrimSuffix(baseURL, "/") + "/api/v1/bom"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, &body)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("X-Api-Key", apiKey)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("upload request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("dependency-track upload status %s: %s", resp.Status, string(respBody))
+	}
+
+	var parsed struct {
+		Token string `json:"token"`
+	}
+	if len(respBody) > 0 {
+		_ = json.Unmarshal(respBody, &parsed)
+	}
+
+	projectRef := projectUUID
+	if projectRef == "" {
+		projectRef = fmt.Sprintf("%s %s", projectName, projectVersion)
+	}
+	fmt.Printf("Dependency-Track upload accepted for project %s\n", projectRef)
+	if parsed.Token != "" {
+		fmt.Printf("  processing token: %s\n", parsed.Token)
+	} else {
+		fmt.Printf("  (no token returned in response)\n")
+	}
+
 	return nil
 }

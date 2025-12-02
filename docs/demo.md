@@ -2,15 +2,15 @@
 
 This page collects runnable flows. Each section is intended to be copy/paste friendly and references the commands shipped in this repo.
 
-## Quickstart: HTTP, no auth
-1. **Start server**  
-   Purpose: launch the SCRAPI demo log that issues signed inclusion receipts and exposes its log key/id. The receipt is the tamper-evident proof that the exact SBOM bytes were recorded at a point in time, solving “prove this SBOM matches what was registered and hasn’t been swapped.”
+## Quickstart: SCRAPI + Dependency-Track (HTTP, no auth)
+1. **Start SCRAPI demo server**  
+   Purpose: launch the transparency log that issues signed inclusion receipts and exposes its log key/id.
    ```bash
    cd ../go-scitt-scrapi
    go run ./cmd/scrapi-demo-server
    ```
 2. **Generate + sign SBOM**  
-   Purpose: create a canonical SBOM and wrap it in COSE_Sign1 with your producer key/kid so verifiers can authenticate the author. This proves “who said this” and binds your identity to the SBOM content before it goes into the log.
+   Purpose: create a canonical SBOM and wrap it in COSE_Sign1 with your producer key/kid so verifiers can authenticate the author.
    ```bash
    go run ./cmd/syft-sbom \
      -source . \
@@ -20,8 +20,8 @@ This page collects runnable flows. Each section is intended to be copy/paste fri
      -cose-out /tmp/demo-sbom.cose \
      -pub-out /tmp/demo-sbom-signer-pub.pem
    ```
-3. **Register SBOM, get receipt, fetch config/log key**  
-   Purpose: anchor the signed SBOM in the transparency log, obtain the signed inclusion receipt, and capture the log key/id so verifiers can pin the log’s identity. This answers “is this SBOM the one in the log?” (receipt + Merkle proof) and “am I trusting the right log?” (pinned log key/id).
+3. **Register SBOM with SCRAPI, get receipt + log key**  
+   Purpose: anchor the signed SBOM in the transparency log, obtain the signed inclusion receipt, and capture the log key/id so verifiers can pin the log’s identity.
    ```bash
    go run ./cmd/scrapi-demo-client \
      -addr http://localhost:8080 \
@@ -32,25 +32,27 @@ This page collects runnable flows. Each section is intended to be copy/paste fri
      -config-out /tmp/transparency.cbor \
      -log-key-pem /tmp/log-public-key.pem
    ```
-4. **Verify with Dependency-Check** (adjust path to your binary):  
-   Purpose: independently validate SBOM signature (producer key/kid), receipt signature (log key), and Merkle inclusion proof to ensure the SBOM matches what was logged. This closes the loop: “is this SBOM from the claimed producer, and does it exactly match what the transparency log recorded at that time?”
+4. **Upload the same SBOM to Dependency-Track**  
+   Purpose: let Dependency-Track ingest/analyze the SBOM, while we retain a SCRAPI receipt that proves which SBOM was sent. Requires Dependency-Track running locally with an API key.
    ```bash
-   cd /path/to/DependencyCheck
-   ./dependency-check.sh --project scrapi-demo \
-     --scrapiSbom /tmp/demo-sbom.cose \
-     --scrapiSbomReceipt /tmp/demo-receipt.cose \
-     --scrapiUrl http://localhost:8080 \
-     --scrapiSbomKey /tmp/demo-sbom-signer-pub.pem \
-     --scrapiLogKeyPin "$(cat /tmp/log-public-key.pem)"
+   go run ./cmd/scrapi-demo-client \
+     -addr http://localhost:8080 \
+     -sbom /tmp/demo-sbom.json \
+     -wrap-sbom=true \
+     -dtrack-url http://localhost:8081 \
+     -dtrack-api-key <your-api-key> \
+     -dtrack-project "scrapi-demo" \
+     -dtrack-version "1.0.0" \
+     -dtrack-auto-create
    ```
-   - Use `--scrapiSbomLocator <locator>` instead of `--scrapiSbomReceipt` to fetch.
-   - Add `--scrapiLogKeyIdPin <id>` if you captured `log_key_id`.
+   - The client uploads the SBOM via `/api/v1/bom` and prints the processing token/project reference. Watch Dependency-Track UI or API for findings while the SCRAPI locator/receipt keep the SBOM tamper-evident.
+5. **(Optional) Sign and register findings**  
+   After Dependency-Track reports findings (UI/API), export a JSON summary, sign it (auditor key/kid) into COSE_Sign1, and register it with SCRAPI to anchor the scan results. Downstream verifiers can chain SBOM receipt + findings receipt.
 
 ## TLS + bearer auth variant (fill paths if you enable TLS)
 - Start server with `-auth-token`, `-tls-cert`, `-tls-key`, `-tls-client-ca` as needed.
 - Client adds: `-token`, `-tls-ca`, `-tls-cert`, `-tls-key`.
-- Dependency-Check adds: `--scrapiToken`, `--scrapiCaCert`, `--scrapiClientCert/Key`.
-- Remainder of flow matches the quickstart.
+- Dependency-Track upload flags stay the same; add `-tls-ca`/`-tls-cert`/`-tls-key` if your Dependency-Track instance is mTLS-protected.
 
 ## Reuse an existing signing key
 If you already have an Ed25519 private key (PKCS#8 PEM):
@@ -66,7 +68,7 @@ go run ./cmd/syft-sbom \
 ```
 
 ## Variant: RSA/ECDSA SBOM signatures
-Goal: exercise Dependency-Check alg selection (non-EdDSA).
+Goal: exercise alg selection (non-EdDSA).
 
 1) Generate keys (examples):
 - RSA:
@@ -82,18 +84,11 @@ Goal: exercise Dependency-Check alg selection (non-EdDSA).
 
 2) Produce a COSE_Sign1 with matching alg:
 - Use a small helper (Go or python) to sign SBOM bytes with `alg` = RS256/ES256 and embed `kid` (for multiple keys). Keep the COSE output at `/tmp/demo-sbom.cose`.
-- Keep the public key for Dependency-Check: `/tmp/sbom-rsa.pub.pem` or `/tmp/sbom-ec.pub.pem`.
+- Keep the public key for verification: `/tmp/sbom-rsa.pub.pem` or `/tmp/sbom-ec.pub.pem`.
 
 3) Register and verify:
 - Register with `scrapi-demo-client -file /tmp/demo-sbom.cose -wrap-sbom=false ...` (as in the quickstart).
-- Verify with Dependency-Check:
-  ```bash
-  ./dependency-check.sh ... \
-    --scrapiSbom /tmp/demo-sbom.cose \
-    --scrapiSbomKey /tmp/sbom-rsa.pub.pem \
-    --scrapiSbomReceipt /tmp/demo-receipt.cose
-  ```
-Expected: the verifier selects RS256/ES256 based on COSE `alg`; fails if the key does not match the alg or `kid` mismatch in a multi-key setup.
+- Verify receipt + SBOM signature with your own verifier, or hand them to Dependency-Track as a provenance record alongside the BOM upload.
 
 ## Variant: JWKS-hosted signer key
 Goal: trust the producer key via JWKS instead of local PEM.
@@ -120,36 +115,10 @@ python3 -m http.server 8000 --directory /tmp
 # JWKS URL: http://localhost:8000/jwks.json
 ```
 
-3) Verify with Dependency-Check:
-```bash
-./dependency-check.sh ... \
-  --scrapiSbom /tmp/demo-sbom.cose \
-  --scrapiSbomReceipt /tmp/demo-receipt.cose \
-  --scrapiSbomJwksUrl http://localhost:8000/jwks.json
-```
-Expected: the verifier downloads the JWKS, filters for `use=sig`, matches `kid`/`alg`, and verifies the SBOM signature.
-
-## Strict vs non-strict runs
-Goal: see enforcement differences for log_id/hash/version.
-
-- Strict (default true):
-  ```bash
-  ./dependency-check.sh ... --scrapiStrict true
-  ```
-  Fails on:
-  - Receipt `log_id` not matching pinned/configured `log_key_id`
-  - Unsupported `hash_alg`
-  - Missing kid when `log_key_id` is configured
-  - Receipt version mismatch
-
-- Non-strict:
-  ```bash
-  ./dependency-check.sh ... --scrapiStrict false
-  ```
-  Warnings instead of hard fails for the above; signature and Merkle proof remain fatal on mismatch.
+3) Configure verifiers or downstream services to use the JWKS for SBOM signature validation; the SCRAPI receipt verification is unchanged.
 
 ## mTLS end-to-end
-Goal: require client certs on the SCRAPI server and verify with both the demo client and Dependency-Check.
+Goal: require client certs on the SCRAPI server and verify with both the demo client and Dependency-Track upload.
 
 1) Generate demo CA/server/client certs (use `scripts/gen_certs.sh` or your own):
 ```bash
@@ -179,15 +148,36 @@ go run ./cmd/scrapi-demo-client \
   -log-key-pem /tmp/log-public-key.pem
 ```
 
-4) Verify with Dependency-Check over mTLS:
+4) Upload to Dependency-Track over TLS/mTLS:
 ```bash
-./dependency-check.sh ... \
-  --scrapiUrl https://localhost:8443 \
-  --scrapiCaCert certs/ca.crt.pem \
-  --scrapiClientCert certs/client.crt.pem \
-  --scrapiClientKey certs/client.key.pem \
-  --scrapiSbom /tmp/demo-sbom.cose \
-  --scrapiSbomReceipt /tmp/demo-receipt.cose \
-  --scrapiSbomKey /tmp/demo-sbom-signer-pub.pem \
-  --scrapiLogKeyPin "$(cat /tmp/log-public-key.pem)"
+go run ./cmd/scrapi-demo-client \
+  -addr https://localhost:8443 \
+  -tls-ca certs/ca.crt.pem \
+  -tls-cert certs/client.crt.pem \
+  -tls-key certs/client.key.pem \
+  -sbom /tmp/demo-sbom.json \
+  -wrap-sbom=true \
+  -dtrack-url https://localhost:8081 \
+  -dtrack-api-key <your-api-key> \
+  -dtrack-project "scrapi-demo" \
+  -dtrack-version "1.0.0" \
+  -dtrack-auto-create
 ```
+
+## Scan report loopback (auditor returns findings anchored in the log)
+Goal: show that not just SBOMs, but also scan results can be signed, registered, and verified with receipts.
+
+1) Let Dependency-Track analyze the SBOM you uploaded. Export findings (JSON) that reference the SBOM locator or hash.
+2) Sign the findings JSON into COSE_Sign1 (auditor key/kid). Keep the public key for downstream verifiers.
+3) Register the signed findings with SCRAPI:
+```bash
+go run ./cmd/scrapi-demo-client \
+  -addr http://localhost:8080 \
+  -file /tmp/demo-findings.cose \
+  -wrap-sbom=false \
+  -out /tmp/demo-findings-receipt.cose \
+  -print-receipt-json \
+  -config-out /tmp/transparency.cbor \
+  -log-key-pem /tmp/log-public-key.pem
+```
+4) Deliver scan findings + receipt + locator. Verifiers check the auditor signature, log signature, and Merkle proof just like the SBOM.
