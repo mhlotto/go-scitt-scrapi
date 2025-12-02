@@ -14,11 +14,20 @@ func NewEd25519Signer(keyID string) (cose.Signer, ed25519.PublicKey, []byte, err
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("generate ed25519: %w", err)
 	}
+	signer, _, kid, err := NewEd25519SignerFromPrivate(priv, keyID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return signer, pub, kid, nil
+}
+
+// NewEd25519SignerFromPrivate creates a signer from an existing ed25519 private key.
+func NewEd25519SignerFromPrivate(priv ed25519.PrivateKey, keyID string) (cose.Signer, ed25519.PublicKey, []byte, error) {
 	signer, err := cose.NewSigner(cose.AlgorithmEdDSA, priv)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("create signer: %w", err)
 	}
-	return signer, pub, []byte(keyID), nil
+	return signer, priv.Public().(ed25519.PublicKey), []byte(keyID), nil
 }
 
 // WrapPayloadAsCOSE produces a SignedStatement by signing the given payload with the provided signer and key ID.

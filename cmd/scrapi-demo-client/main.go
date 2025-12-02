@@ -7,8 +7,10 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -40,6 +42,8 @@ func main() {
 	pollInterval := flag.Duration("poll-interval", 2*time.Second, "poll interval when waiting for receipt")
 	printReceiptJSON := flag.Bool("print-receipt-json", false, "print decoded receipt payload as JSON")
 	fetchReceipts := flag.Bool("fetch-receipts", false, "fetch /receipts/{id} after registration")
+	configOut := flag.String("config-out", "", "path to write fetched transparency configuration (CBOR)")
+	logKeyOut := flag.String("log-key-pem", "", "path to write log_public_key as PEM")
 	flag.Parse()
 
 	payload, contentType, checkLeaf, err := loadPayload(*file, *sbom, *vex, *message, *wrapSBOM, *expectLeaf)
@@ -81,6 +85,12 @@ func main() {
 	if len(receipt) > 0 {
 		if err := verifyReceipt(context.Background(), httpClient, *addr, locator, receipt, payload, checkLeaf, *printReceiptJSON); err != nil {
 			log.Fatalf("verify receipt: %v", err)
+		}
+	}
+
+	if *configOut != "" || *logKeyOut != "" {
+		if err := fetchAndPersistConfig(context.Background(), httpClient, *addr, *configOut, *logKeyOut); err != nil {
+			log.Fatalf("fetch config: %v", err)
 		}
 	}
 
@@ -312,4 +322,53 @@ func equalBytes(a, b []byte) bool {
 		}
 	}
 	return true
+}
+
+func fetchAndPersistConfig(ctx context.Context, httpClient *http.Client, baseURL, configPath, logKeyPath string) error {
+	cfgURL := strings.TrimSuffix(baseURL, "/") + "/.well-known/transparency-configuration"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfgURL, nil)
+	if err != nil {
+		return fmt.Errorf("build config request: %w", err)
+	}
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("get config: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("config status %s", resp.Status)
+	}
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read config: %w", err)
+	}
+	if configPath != "" {
+		if err := os.WriteFile(configPath, raw, 0600); err != nil {
+			return fmt.Errorf("write config: %w", err)
+		}
+		fmt.Printf("Transparency configuration written to %s\n", configPath)
+	}
+	if logKeyPath != "" {
+		var cfg map[string]any
+		if err := cbor.Unmarshal(raw, &cfg); err != nil {
+			return fmt.Errorf("decode config: %w", err)
+		}
+		logKeyRaw, ok := cfg["log_public_key"].([]byte)
+		if !ok || len(logKeyRaw) == 0 {
+			return fmt.Errorf("log_public_key missing or invalid")
+		}
+		block := &pem.Block{Type: "PUBLIC KEY", Bytes: logKeyRaw}
+		if err := os.WriteFile(logKeyPath, pem.EncodeToMemory(block), 0600); err != nil {
+			return fmt.Errorf("write log key: %w", err)
+		}
+		logKeyID, _ := cfg["log_key_id"].(string)
+		if logKeyID != "" {
+			fmt.Printf("log_key_id: %s\n", logKeyID)
+		}
+		fmt.Printf("Log public key written to %s\n", logKeyPath)
+	}
+	return nil
 }
