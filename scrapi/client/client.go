@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto"
+	"crypto/ed25519"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -32,6 +35,12 @@ func (c *Client) RegisterWithContentType(ctx context.Context, payload []byte, co
 	client := c.HTTPClient
 	if client == nil {
 		client = http.DefaultClient
+	}
+
+	if c.TSKey == nil {
+		if err := c.bootstrapTSKey(ctx); err != nil {
+			return "", nil, fmt.Errorf("bootstrap TS key: %w", err)
+		}
 	}
 
 	endpoint := strings.TrimSuffix(c.BaseURL, "/") + "/statements"
@@ -86,6 +95,11 @@ func (c *Client) FetchReceipt(ctx context.Context, id string, maxAttempts int, d
 	client := c.HTTPClient
 	if client == nil {
 		client = http.DefaultClient
+	}
+	if c.TSKey == nil {
+		if err := c.bootstrapTSKey(ctx); err != nil {
+			return nil, fmt.Errorf("bootstrap TS key: %w", err)
+		}
 	}
 	if maxAttempts < 1 {
 		maxAttempts = 1
@@ -223,4 +237,52 @@ func (c *Client) verifySTHAndConsistency(ctx context.Context) error {
 
 	c.LastSTH = sthRaw
 	return nil
+}
+
+// bootstrapTSKey fetches .well-known/scitt and sets TSKey if published.
+func (c *Client) bootstrapTSKey(ctx context.Context) error {
+	configURL := strings.TrimSuffix(c.BaseURL, "/") + "/.well-known/scitt"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, configURL, nil)
+	if err != nil {
+		return fmt.Errorf("build well-known request: %w", err)
+	}
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	client := c.HTTPClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("GET well-known: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("well-known status %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	var cfg struct {
+		TSPublicKeys []struct {
+			KID       []byte `json:"kid"`
+			PublicKey []byte `json:"publicKey"`
+			Alg       any    `json:"alg"`
+			Format    string `json:"format"`
+		} `json:"tsPublicKeys"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
+		return fmt.Errorf("decode well-known: %w", err)
+	}
+	for _, k := range cfg.TSPublicKeys {
+		if len(k.PublicKey) == ed25519.PublicKeySize {
+			c.TSKey = ed25519.PublicKey(k.PublicKey)
+			return nil
+		}
+		// Support base64-encoded keys if provided as text.
+		if decoded, err := base64.StdEncoding.DecodeString(string(k.PublicKey)); err == nil && len(decoded) == ed25519.PublicKeySize {
+			c.TSKey = ed25519.PublicKey(decoded)
+			return nil
+		}
+	}
+	return fmt.Errorf("no usable TS key in well-known")
 }

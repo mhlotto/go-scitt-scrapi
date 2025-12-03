@@ -62,6 +62,7 @@ func scittConfigHandler(opts HandlerOptions, logger *log.Logger) http.HandlerFun
 					"kid":       opts.LogKeyID,
 					"publicKey": opts.LogPubKey,
 					"alg":       cose.AlgorithmEdDSA,
+					"format":    "ed25519-pkcs8",
 				},
 			}
 		}
