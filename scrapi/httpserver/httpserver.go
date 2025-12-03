@@ -42,6 +42,7 @@ func NewMux(opts HandlerOptions) http.Handler {
 	mux.Handle("/entries", registerHandler(opts, logger))
 	mux.Handle("/entries/", queryStatusHandler(opts, logger))
 	mux.Handle("/receipts/", resolveReceiptHandler(opts, logger))
+	mux.Handle("/verify/", verifyHandler(opts, logger))
 	return mux
 }
 

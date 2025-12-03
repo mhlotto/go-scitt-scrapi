@@ -35,19 +35,21 @@ type AuditRecord struct {
 
 // InMemoryTransparencyService is a toy implementation useful for demos and tests.
 type InMemoryTransparencyService struct {
-	mu         sync.RWMutex
-	statements map[string]SignedStatement
-	receipts   map[string]*Receipt
-	statuses   map[string]RegistrationStatus
-	audits     []AuditRecord
-	tree       *MerkleTree
-	signer     cose.Signer
-	pubKey     ed25519.PublicKey
-	keyID      []byte
-	logID      string
-	lastSTH    *SignedTreeHead
-	async      bool
-	asyncDelay time.Duration
+	mu            sync.RWMutex
+	statements    map[string]SignedStatement
+	receipts      map[string]*Receipt
+	statuses      map[string]RegistrationStatus
+	audits        []AuditRecord
+	tree          *MerkleTree
+	signer        cose.Signer
+	pubKey        ed25519.PublicKey
+	keyID         []byte
+	logID         string
+	treeType      string
+	scrapiVersion string
+	lastSTH       *SignedTreeHead
+	async         bool
+	asyncDelay    time.Duration
 }
 
 // SignedTreeHead captures an STH Sign1 message and raw bytes.
@@ -77,17 +79,19 @@ func newInMemoryTransparencyService(async bool, delay time.Duration) *InMemoryTr
 	}
 
 	return &InMemoryTransparencyService{
-		statements: make(map[string]SignedStatement),
-		receipts:   make(map[string]*Receipt),
-		statuses:   make(map[string]RegistrationStatus),
-		tree:       &MerkleTree{},
-		signer:     signer,
-		pubKey:     pub,
-		keyID:      []byte("demo-log-key"),
-		logID:      "demo-log",
-		audits:     make([]AuditRecord, 0, 32),
-		async:      async,
-		asyncDelay: delay,
+		statements:    make(map[string]SignedStatement),
+		receipts:      make(map[string]*Receipt),
+		statuses:      make(map[string]RegistrationStatus),
+		tree:          &MerkleTree{},
+		signer:        signer,
+		pubKey:        pub,
+		keyID:         []byte("demo-log-key"),
+		logID:         "demo-log",
+		treeType:      "merkle-ct-sha256",
+		scrapiVersion: "0.1",
+		audits:        make([]AuditRecord, 0, 32),
+		async:         async,
+		asyncDelay:    delay,
 	}
 	s.updateSTH()
 	return s
@@ -141,12 +145,15 @@ func (s *InMemoryTransparencyService) Register(ctx context.Context, ss SignedSta
 		return Locator{}, nil, err
 	}
 	payload := ReceiptPayload{
-		LogID:     s.logID,
-		LeafHash:  leaf,
-		RootHash:  root,
-		TreeSize:  sizeUint,
-		Path:      path,
-		Timestamp: time.Now().UTC().Unix(),
+		LogID:         s.logID,
+		HashAlg:       "sha-256",
+		TreeType:      s.treeType,
+		ScrapiVersion: s.scrapiVersion,
+		LeafHash:      leaf,
+		RootHash:      root,
+		TreeSize:      sizeUint,
+		Path:          path,
+		Timestamp:     time.Now().UTC().Unix(),
 	}
 	payloadRaw, err := cbor.Marshal(payload)
 	if err != nil {
@@ -247,12 +254,15 @@ func (s *InMemoryTransparencyService) completeAsync(id string) {
 		return
 	}
 	payload := ReceiptPayload{
-		LogID:     s.logID,
-		LeafHash:  leaf,
-		RootHash:  root,
-		TreeSize:  sizeUint,
-		Path:      path,
-		Timestamp: time.Now().UTC().Unix(),
+		LogID:         s.logID,
+		HashAlg:       "sha-256",
+		TreeType:      s.treeType,
+		ScrapiVersion: s.scrapiVersion,
+		LeafHash:      leaf,
+		RootHash:      root,
+		TreeSize:      sizeUint,
+		Path:          path,
+		Timestamp:     time.Now().UTC().Unix(),
 	}
 	payloadRaw, err := cbor.Marshal(payload)
 	if err != nil {
@@ -357,11 +367,13 @@ func (s *InMemoryTransparencyService) updateSTHLocked() {
 		return
 	}
 	payload := STHPayload{
-		LogID:     s.logID,
-		RootHash:  root,
-		TreeSize:  sizeUint,
-		HashAlg:   "sha-256",
-		Timestamp: time.Now().UTC().Unix(),
+		LogID:         s.logID,
+		RootHash:      root,
+		TreeSize:      sizeUint,
+		HashAlg:       "sha-256",
+		TreeType:      s.treeType,
+		ScrapiVersion: s.scrapiVersion,
+		Timestamp:     time.Now().UTC().Unix(),
 	}
 	payloadRaw, err := cbor.Marshal(payload)
 	if err != nil {

@@ -16,21 +16,26 @@ type Receipt struct {
 
 // ReceiptPayload describes the signed content inside a receipt.
 type ReceiptPayload struct {
-	LogID     string      `cbor:"log_id,omitempty"`
-	LeafHash  []byte      `cbor:"leaf"`
-	RootHash  []byte      `cbor:"root"`
-	TreeSize  uint64      `cbor:"size"`
-	Path      []ProofNode `cbor:"path"`
-	Timestamp int64       `cbor:"ts"`
+	LogID         string      `cbor:"log_id,omitempty"`
+	HashAlg       string      `cbor:"hash_alg,omitempty"`
+	TreeType      string      `cbor:"tree_type,omitempty"`
+	ScrapiVersion string      `cbor:"scrapi_version,omitempty"`
+	LeafHash      []byte      `cbor:"leaf"`
+	RootHash      []byte      `cbor:"root"`
+	TreeSize      uint64      `cbor:"size"`
+	Path          []ProofNode `cbor:"path"`
+	Timestamp     int64       `cbor:"ts"`
 }
 
 // STHPayload describes the signed content of a Signed Tree Head.
 type STHPayload struct {
-	LogID     string `cbor:"log_id,omitempty"`
-	RootHash  []byte `cbor:"root"`
-	TreeSize  uint64 `cbor:"size"`
-	HashAlg   string `cbor:"hash_alg,omitempty"`
-	Timestamp int64  `cbor:"ts"`
+	LogID         string `cbor:"log_id,omitempty"`
+	RootHash      []byte `cbor:"root"`
+	TreeSize      uint64 `cbor:"size"`
+	HashAlg       string `cbor:"hash_alg,omitempty"`
+	TreeType      string `cbor:"tree_type,omitempty"`
+	ScrapiVersion string `cbor:"scrapi_version,omitempty"`
+	Timestamp     int64  `cbor:"ts"`
 }
 
 // RegistrationStatus tracks the state of a registration.
