@@ -19,6 +19,7 @@ type Client struct {
 	// Trusted keys for verification.
 	IssuerKey crypto.PublicKey
 	TSKey     crypto.PublicKey
+	LastSTH   []byte
 }
 
 // Register posts a COSE_Sign1 payload to /statements and returns the locator ID and optional receipt bytes.
@@ -134,5 +135,92 @@ func (c *Client) FetchReceiptAndVerify(ctx context.Context, id string, statement
 	if err := Verify(statementRaw, receipt, c.IssuerKey, c.TSKey); err != nil {
 		return nil, fmt.Errorf("verify receipt: %w", err)
 	}
+	if err := c.verifySTHAndConsistency(ctx); err != nil {
+		return nil, err
+	}
 	return receipt, nil
+}
+
+// verifySTHAndConsistency fetches the latest STH and checks signature and consistency from prior STH.
+func (c *Client) verifySTHAndConsistency(ctx context.Context) error {
+	if c.TSKey == nil {
+		return fmt.Errorf("TS key not configured for STH verification")
+	}
+	sthURL := strings.TrimSuffix(c.BaseURL, "/") + "/.well-known/transparency-sth"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sthURL, nil)
+	if err != nil {
+		return fmt.Errorf("build STH request: %w", err)
+	}
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	req.Header.Set("Accept", "application/cose")
+
+	client := c.HTTPClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("GET STH: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("unexpected STH status %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	sthRaw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read STH: %w", err)
+	}
+
+	treeHead, err := scrapi.VerifySTH(sthRaw, c.TSKey)
+	if err != nil {
+		return fmt.Errorf("verify STH: %w", err)
+	}
+
+	if len(c.LastSTH) > 0 {
+		prevHead, err := scrapi.VerifySTH(c.LastSTH, c.TSKey)
+		if err != nil {
+			return fmt.Errorf("verify previous STH: %w", err)
+		}
+		if treeHead.TreeSize < prevHead.TreeSize {
+			return fmt.Errorf("sth tree size decreased")
+		}
+		if treeHead.TreeSize > prevHead.TreeSize {
+			consURL := strings.TrimSuffix(c.BaseURL, "/") + fmt.Sprintf("/consistency?first=%d&second=%d", prevHead.TreeSize, treeHead.TreeSize)
+			creq, err := http.NewRequestWithContext(ctx, http.MethodGet, consURL, nil)
+			if err != nil {
+				return fmt.Errorf("build consistency request: %w", err)
+			}
+			if c.Token != "" {
+				creq.Header.Set("Authorization", "Bearer "+c.Token)
+			}
+			cresp, err := client.Do(creq)
+			if err != nil {
+				return fmt.Errorf("GET consistency: %w", err)
+			}
+			if cresp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(io.LimitReader(cresp.Body, 512))
+				cresp.Body.Close()
+				return fmt.Errorf("consistency status %s: %s", cresp.Status, strings.TrimSpace(string(body)))
+			}
+			proofBytes, err := io.ReadAll(cresp.Body)
+			cresp.Body.Close()
+			if err != nil {
+				return fmt.Errorf("read consistency proof: %w", err)
+			}
+			var proof [][]byte
+			if err := cbor.Unmarshal(proofBytes, &proof); err != nil {
+				return fmt.Errorf("decode consistency proof: %w", err)
+			}
+			if err := scrapi.VerifyConsistencyProof(proof, prevHead.TreeSize, treeHead.TreeSize, prevHead.RootHash, treeHead.RootHash); err != nil {
+				return fmt.Errorf("consistency proof invalid: %w", err)
+			}
+		}
+	}
+
+	c.LastSTH = sthRaw
+	return nil
 }
