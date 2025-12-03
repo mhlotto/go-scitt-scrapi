@@ -5,9 +5,12 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -70,9 +73,9 @@ func NewInMemoryTransparencyServiceAsync(delay time.Duration) *InMemoryTranspare
 }
 
 func newInMemoryTransparencyService(async bool, delay time.Duration) *InMemoryTransparencyService {
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	priv, pub, err := loadOrCreateEd25519Key("scrapi-ts-key.pkcs8")
 	if err != nil {
-		panic(fmt.Errorf("generate ed25519 key: %w", err))
+		panic(fmt.Errorf("load/create ed25519 key: %w", err))
 	}
 	signer, err := cose.NewSigner(cose.AlgorithmEdDSA, priv)
 	if err != nil {
@@ -427,4 +430,36 @@ func (s *InMemoryTransparencyService) updateSTHLocked() {
 		return
 	}
 	s.lastSTH = &SignedTreeHead{Raw: raw, Msg: msg}
+}
+
+func loadOrCreateEd25519Key(path string) (ed25519.PrivateKey, ed25519.PublicKey, error) {
+	if path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			block, _ := pem.Decode(data)
+			if block == nil {
+				return nil, nil, fmt.Errorf("pem decode failed for %s", path)
+			}
+			key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+			if err != nil {
+				return nil, nil, fmt.Errorf("parse pkcs8: %w", err)
+			}
+			priv, ok := key.(ed25519.PrivateKey)
+			if !ok {
+				return nil, nil, fmt.Errorf("not an ed25519 key")
+			}
+			return priv, priv.Public().(ed25519.PublicKey), nil
+		}
+	}
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate ed25519: %w", err)
+	}
+	if path != "" {
+		der, err := x509.MarshalPKCS8PrivateKey(priv)
+		if err == nil {
+			block := &pem.Block{Type: "PRIVATE KEY", Bytes: der}
+			_ = os.WriteFile(path, pem.EncodeToMemory(block), 0o600)
+		}
+	}
+	return priv, priv.Public().(ed25519.PublicKey), nil
 }

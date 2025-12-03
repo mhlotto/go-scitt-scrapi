@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,9 @@ type Client struct {
 	BaseURL    string
 	HTTPClient *http.Client
 	Token      string
+	// Trusted keys for verification.
+	IssuerKey crypto.PublicKey
+	TSKey     crypto.PublicKey
 }
 
 // Register posts a COSE_Sign1 payload to /statements and returns the locator ID and optional receipt bytes.
@@ -116,4 +120,19 @@ func (c *Client) FetchReceipt(ctx context.Context, id string, maxAttempts int, d
 		return nil, fmt.Errorf("unexpected status %s", resp.Status)
 	}
 	return nil, fmt.Errorf("receipt not available after %d attempts", maxAttempts)
+}
+
+// FetchReceiptAndVerify polls for a receipt and verifies it against the provided statement.
+func (c *Client) FetchReceiptAndVerify(ctx context.Context, id string, statementRaw []byte, maxAttempts int, delay time.Duration) ([]byte, error) {
+	receipt, err := c.FetchReceipt(ctx, id, maxAttempts, delay)
+	if err != nil {
+		return nil, err
+	}
+	if c.IssuerKey == nil || c.TSKey == nil {
+		return receipt, fmt.Errorf("issuer/TS keys not configured for verification")
+	}
+	if err := Verify(statementRaw, receipt, c.IssuerKey, c.TSKey); err != nil {
+		return nil, fmt.Errorf("verify receipt: %w", err)
+	}
+	return receipt, nil
 }

@@ -79,6 +79,97 @@ func VerifyStatementAndReceipt(statementRaw, receiptRaw []byte, trust Verificati
 	return nil
 }
 
+// VerifySTH validates a signed tree head using the TS key.
+func VerifySTH(sthRaw []byte, tsKey crypto.PublicKey) (TreeHead, error) {
+	var msg cose.Sign1Message
+	if err := cbor.Unmarshal(sthRaw, &msg); err != nil {
+		return TreeHead{}, fmt.Errorf("parse STH COSE: %w", err)
+	}
+	verifier, err := cose.NewVerifier(msg.Headers.AlgorithmMust(), tsKey)
+	if err != nil {
+		return TreeHead{}, fmt.Errorf("ts verifier: %w", err)
+	}
+	if err := msg.Verify(nil, verifier); err != nil {
+		return TreeHead{}, fmt.Errorf("verify STH signature: %w", err)
+	}
+	var payload STHPayload
+	if err := cbor.Unmarshal(msg.Payload, &payload); err != nil {
+		return TreeHead{}, fmt.Errorf("decode STH payload: %w", err)
+	}
+	if payload.TreeHead.TreeSize == 0 {
+		return TreeHead{}, fmt.Errorf("invalid tree size in STH")
+	}
+	if payload.TreeHead.Timestamp == 0 {
+		return TreeHead{}, fmt.Errorf("missing timestamp in STH")
+	}
+	return payload.TreeHead, nil
+}
+
+// VerifyConsistencyProof checks an RFC6962/9162 consistency proof between two tree heads.
+func VerifyConsistencyProof(proof [][]byte, firstSize, secondSize uint64, firstRoot, secondRoot []byte) error {
+	if firstSize == 0 || firstSize > secondSize {
+		return fmt.Errorf("invalid sizes")
+	}
+	if firstSize == secondSize {
+		if len(proof) != 0 {
+			return fmt.Errorf("unexpected proof entries for equal sizes")
+		}
+		if !equalBytes(firstRoot, secondRoot) {
+			return fmt.Errorf("root mismatch for equal sizes")
+		}
+		return nil
+	}
+	if len(proof) == 0 {
+		return fmt.Errorf("empty proof")
+	}
+
+	fn := firstSize - 1
+	sn := secondSize - 1
+
+	var fr, sr []byte
+	// Skip common right edges.
+	for fn&1 == 0 {
+		fn >>= 1
+		sn >>= 1
+	}
+	fr = proof[0]
+	sr = proof[0]
+	idx := 1
+
+	for fn != 0 {
+		if idx >= len(proof) {
+			return fmt.Errorf("proof too short")
+		}
+		switch {
+		case sn&1 == 1:
+			fr = merkleNodeHash(proof[idx], fr)
+			sr = merkleNodeHash(proof[idx], sr)
+			idx++
+		default:
+			sr = merkleNodeHash(sr, proof[idx])
+			idx++
+		}
+		fn >>= 1
+		sn >>= 1
+		for fn&1 == 0 {
+			fn >>= 1
+			sn >>= 1
+		}
+	}
+	for idx < len(proof) {
+		sr = merkleNodeHash(sr, proof[idx])
+		idx++
+	}
+
+	if !equalBytes(fr, firstRoot) {
+		return fmt.Errorf("first root mismatch")
+	}
+	if !equalBytes(sr, secondRoot) {
+		return fmt.Errorf("second root mismatch")
+	}
+	return nil
+}
+
 func computeRootFromProof(leaf []byte, proof [][]byte, leafIndex, treeSize uint64) []byte {
 	hash := leaf
 	index := leafIndex
