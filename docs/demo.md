@@ -2,14 +2,32 @@
 
 This page collects runnable flows. Each section is intended to be copy/paste friendly and references the commands shipped in this repo.
 
-## Quickstart: SCRAPI + Dependency-Track (HTTP, no auth)
-1. **Start SCRAPI demo server**  
+## Walkthrough: SCRAPI + Dependency-Track (HTTP, no auth)
+
+### 0. Prepare Dependency-Track (backend + frontend + API key)
+1. Build and start the apiserver (default port 8080):
+   ```bash
+   cd dependency-track
+   mvn -DskipTests clean package
+   java -jar target/dependency-track-apiserver*.jar
+   ```
+   Wait until you see “Started DependencyTrackApplication” in logs.
+2. Start the UI (dev serve on port 8081):
+   ```bash
+   cd ../frontend
+   npm install
+   npm run serve -- --port 8081
+   ```
+3. Open the UI at http://localhost:8081, log in (default admin/password if unchanged), and create an API key (Profile → API Keys). Keep it handy for the upload step.
+
+### 1. Start SCRAPI demo server
    Purpose: launch the transparency log that issues signed inclusion receipts and exposes its log key/id.
    ```bash
    cd ../go-scitt-scrapi
    go run ./cmd/scrapi-demo-server
    ```
-2. **Generate + sign SBOM**  
+
+### 2. Generate + sign SBOM
    Purpose: create a canonical SBOM and wrap it in COSE_Sign1 with your producer key/kid so verifiers can authenticate the author.
    ```bash
    go run ./cmd/syft-sbom \
@@ -20,7 +38,8 @@ This page collects runnable flows. Each section is intended to be copy/paste fri
      -cose-out /tmp/demo-sbom.cose \
      -pub-out /tmp/demo-sbom-signer-pub.pem
    ```
-3. **Register SBOM with SCRAPI, get receipt + log key**  
+
+### 3. Register SBOM with SCRAPI, get receipt + log key
    Purpose: anchor the signed SBOM in the transparency log, obtain the signed inclusion receipt, and capture the log key/id so verifiers can pin the log’s identity.
    ```bash
    go run ./cmd/scrapi-demo-client \
@@ -32,8 +51,9 @@ This page collects runnable flows. Each section is intended to be copy/paste fri
      -config-out /tmp/transparency.cbor \
      -log-key-pem /tmp/log-public-key.pem
    ```
-4. **Upload the same SBOM to Dependency-Track**  
-   Purpose: let Dependency-Track ingest/analyze the SBOM, while we retain a SCRAPI receipt that proves which SBOM was sent. Requires Dependency-Track running locally with an API key.
+
+### 4. Upload the same SBOM to Dependency-Track
+Purpose: let Dependency-Track ingest/analyze the SBOM while retaining SCRAPI evidence.
    ```bash
    go run ./cmd/scrapi-demo-client \
      -addr http://localhost:8080 \
@@ -53,7 +73,12 @@ This page collects runnable flows. Each section is intended to be copy/paste fri
      -dtrack-scrapi-strict \
      -dtrack-poll -dtrack-poll-attempts 10 -dtrack-poll-interval 2s
    ```
-   - The client uploads the SBOM via `/api/v1/bom` and prints the processing token/project reference. Watch Dependency-Track UI or API for findings while the SCRAPI locator/receipt keep the SBOM tamper-evident.
+   - The client uploads the SBOM via `/api/v1/bom` and prints the processing token/project reference. Dependency-Track will call `/verify/{locator}` on the SCRAPI server, validate the receipt/consistency/subject, and cache freshness info.
+   - In the Dependency-Track UI, check:
+     - **Project dashboard**: SCRAPI verification badge + freshness (if latest BOM exists).
+     - **Project details modal**: SCRAPI status/locator/reason/strict + freshness (STH size/timestamp).  
+       Note: UI is read-only for SCRAPI info; failures/degraded freshness still allow ingest unless `artifact.scrapi.verification.required=true`.
+
 5. **(Optional) Sign and register findings**  
    After Dependency-Track reports findings (UI/API), export a JSON summary, sign it (auditor key/kid) into COSE_Sign1, and register it with SCRAPI to anchor the scan results. Downstream verifiers can chain SBOM receipt + findings receipt.
 

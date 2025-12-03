@@ -4,6 +4,7 @@ This documentation explains how to run an end-to-end transparency demo using the
 
 ## What’s here
 - [Demo walkthrough](demo.md): step-by-step runs (HTTP, TLS/auth variants) with commands.
+- [Story & roles](story.md): short narrative of the parties and why SCRAPI + Dependency-Track helps.
 - [Dependency-Track integration](dependency-track.md): how the analyzer consumes SBOMs and how we tie its results back into SCRAPI.
 - [Architecture & data flow](architecture.md): SCITT/SCRAPI context, COSE shapes, Merkle proofs, ASCII flow sketches.
 - [Playbook ideas](playbook.md): scenarios to iterate on (multiple algs, JWKS, policy checks).
