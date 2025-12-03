@@ -55,6 +55,13 @@ func scittConfigHandler(opts HandlerOptions, logger *log.Logger) http.HandlerFun
 			"version":         opts.SCRAPIVersion,
 			"treeAlgorithm":   opts.TreeType,
 			"hashAlgorithm":   opts.HashAlg,
+			"supportedMediaTypes": []string{
+				mediaTypeStatement,
+				mediaTypeReceipt,
+			},
+			"supportedProfiles": []string{
+				"draft-ietf-scitt-scrapi-05",
+			},
 		}
 		if len(opts.LogPubKey) > 0 {
 			cfg["tsPublicKeys"] = []map[string]any{

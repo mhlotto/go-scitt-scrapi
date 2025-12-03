@@ -39,6 +39,22 @@ func VerifyStatementAndReceipt(statementRaw, receiptRaw []byte, trust Verificati
 		return fmt.Errorf("verify statement signature: %w", err)
 	}
 
+	// Enforce subject/digest binding for sha256 if present.
+	env, err := DecodeEnvelope(stmt.Payload)
+	if err != nil {
+		return fmt.Errorf("decode envelope: %w", err)
+	}
+	if len(env.Subject) > 0 {
+		sbomDigest := sha256.Sum256(env.Payload)
+		for _, subj := range env.Subject {
+			if val, ok := subj.Digest["sha256"]; ok {
+				if val != fmt.Sprintf("%x", sbomDigest[:]) {
+					return fmt.Errorf("subject digest mismatch for sha256")
+				}
+			}
+		}
+	}
+
 	// Parse receipt
 	var receiptMsg cose.Sign1Message
 	if err := cbor.Unmarshal(receiptRaw, &receiptMsg); err != nil {
