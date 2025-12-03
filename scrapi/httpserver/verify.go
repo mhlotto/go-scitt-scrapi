@@ -10,9 +10,11 @@ import (
 // verifyHandler returns receipt + STH payload (and consistency proof when applicable) in one call.
 func verifyHandler(opts HandlerOptions, logger *log.Logger) http.HandlerFunc {
 	type response struct {
-		Receipt []byte             `cbor:"receipt,omitempty"`
-		STH     []byte             `cbor:"sth,omitempty"`
-		Proof   []scrapi.ProofNode `cbor:"consistency_proof,omitempty"`
+		Receipt  []byte             `cbor:"receipt,omitempty"`
+		STH      []byte             `cbor:"sth,omitempty"`
+		Proof    []scrapi.ProofNode `cbor:"consistency_proof,omitempty"`
+		TreeSize uint64             `cbor:"tree_size,omitempty"`
+		STHRoot  []byte             `cbor:"sth_root,omitempty"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -44,12 +46,16 @@ func verifyHandler(opts HandlerOptions, logger *log.Logger) http.HandlerFunc {
 		}
 
 		var proof []scrapi.ProofNode
+		var sthPayload scrapi.STHPayload
+		if sth != nil && sth.Msg != nil {
+			_ = cbor.Unmarshal(sth.Msg.Payload, &sthPayload)
+		}
 		// Try to parse receipt payload to determine size and fetch consistency proof if newer STH.
 		if receipt.Msg != nil {
 			var payload scrapi.ReceiptPayload
 			if err := cbor.Unmarshal(receipt.Msg.Payload, &payload); err == nil {
-				if payload.TreeSize < sthPayloadSize(sth) {
-					if p, err := opts.Service.ConsistencyProof(r.Context(), payload.TreeSize, sthPayloadSize(sth)); err == nil {
+				if payload.TreeSize < sthPayload.TreeSize {
+					if p, err := opts.Service.ConsistencyProof(r.Context(), payload.TreeSize, sthPayload.TreeSize); err == nil {
 						proof = p
 					}
 				}
@@ -57,9 +63,11 @@ func verifyHandler(opts HandlerOptions, logger *log.Logger) http.HandlerFunc {
 		}
 
 		resp := response{
-			Receipt: receipt.Raw,
-			STH:     sth.Raw,
-			Proof:   proof,
+			Receipt:  receipt.Raw,
+			STH:      sth.Raw,
+			Proof:    proof,
+			TreeSize: sthPayload.TreeSize,
+			STHRoot:  sthPayload.RootHash,
 		}
 
 		body, err := cbor.Marshal(resp)
