@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"fmt"
+	"time"
 
 	"github.com/veraison/go-cose"
 )
@@ -36,8 +37,10 @@ func WrapPayloadAsCOSE(payload []byte, signer cose.Signer, keyID []byte) (Signed
 	msg.Payload = payload
 	msg.Headers.Protected.SetAlgorithm(signer.Algorithm())
 	if len(keyID) > 0 {
-		msg.Headers.Unprotected[cose.HeaderLabelKeyID] = keyID
+		msg.Headers.Protected[cose.HeaderLabelKeyID] = keyID
 	}
+	// Optional type to aid downstream processing.
+	_, _ = msg.Headers.Protected.SetContentType("application/cbor")
 	if err := msg.Sign(rand.Reader, nil, signer); err != nil {
 		return SignedStatement{}, fmt.Errorf("sign payload: %w", err)
 	}
@@ -47,3 +50,30 @@ func WrapPayloadAsCOSE(payload []byte, signer cose.Signer, keyID []byte) (Signed
 	}
 	return SignedStatement{Raw: raw, Msg: msg}, nil
 }
+
+// BuildSCITTStatement constructs a canonical SCITT envelope and signs it.
+func BuildSCITTStatement(env StatementEnvelope, signer cose.Signer, kid []byte) (SignedStatement, error) {
+	encoded, err := EncodeEnvelopeCanonical(env)
+	if err != nil {
+		return SignedStatement{}, err
+	}
+	msg := cose.NewSign1Message()
+	msg.Payload = encoded
+	msg.Headers.Protected.SetAlgorithm(signer.Algorithm())
+	if len(kid) > 0 {
+		msg.Headers.Protected[cose.HeaderLabelKeyID] = kid
+	}
+	// Mark the payload content type as SCITT envelope CBOR.
+	_, _ = msg.Headers.Protected.SetContentType("application/scitt-statement+cbor")
+	if err := msg.Sign(rand.Reader, nil, signer); err != nil {
+		return SignedStatement{}, fmt.Errorf("sign statement: %w", err)
+	}
+	raw, err := msg.MarshalCBOR()
+	if err != nil {
+		return SignedStatement{}, fmt.Errorf("marshal sign1: %w", err)
+	}
+	return SignedStatement{Raw: raw, Msg: msg}, nil
+}
+
+// NowUnix returns a UTC unix timestamp; separated for tests.
+var NowUnix = func() int64 { return time.Now().UTC().Unix() }

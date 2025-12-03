@@ -8,7 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
-    "path/filepath"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -26,10 +26,6 @@ func main() {
 
 	// Use async mode to demonstrate pending -> success flow.
 	service := scrapi.NewInMemoryTransparencyServiceAsync(2 * time.Second)
-	stmtSigner, _, stmtKID, err := scrapi.NewEd25519Signer("demo-stmt-key")
-	if err != nil {
-		log.Fatalf("init statement signer: %v", err)
-	}
 
 	hostPort := *addr
 	if !strings.HasPrefix(hostPort, "http://") && !strings.HasPrefix(hostPort, "https://") {
@@ -41,17 +37,15 @@ func main() {
 	}
 
 	mux := httpserver.NewMux(httpserver.HandlerOptions{
-		Service:       service,
-		IssuerURL:     hostPort,
-		LogPubKey:     service.LogPublicKey(),
-		LogKeyID:      service.LogKeyID(),
-		HashAlg:       "sha-256",
-		TreeType:      "binary-merkle-v1",
-		SCRAPIVersion: "draft-ietf-scitt-scrapi-05",
-		StmtSigner:    stmtSigner,
-		StmtSignerKID: stmtKID,
-		AuthSchemes:   authSchemes(*token, *tlsClientCA),
-		AuthFunc:      bearerAuthFunc(*token),
+		Service:         service,
+		LogPubKey:       service.LogPublicKey(),
+		LogKeyID:        service.LogKeyID(),
+		HashAlg:         "sha-256",
+		TreeType:        "binary-merkle-v1",
+		SCRAPIVersion:   "draft-ietf-scitt-scrapi-05",
+		AuthSchemes:     authSchemes(*token, *tlsClientCA),
+		AuthFunc:        bearerAuthFunc(*token),
+		ServiceEndpoint: hostPort,
 	})
 
 	srv := &http.Server{

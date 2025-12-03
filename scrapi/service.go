@@ -20,6 +20,7 @@ type TransparencyService interface {
 	Register(ctx context.Context, ss SignedStatement) (Locator, *Receipt, error)
 	QueryStatus(ctx context.Context, loc Locator) (RegistrationStatus, *Receipt, error)
 	ResolveReceipt(ctx context.Context, id string) (*Receipt, error)
+	Statement(ctx context.Context, id string) (SignedStatement, error)
 	CurrentSTH(ctx context.Context) (*SignedTreeHead, error)
 	ConsistencyProof(ctx context.Context, firstSize, secondSize uint64) ([]ProofNode, error)
 }
@@ -163,7 +164,7 @@ func (s *InMemoryTransparencyService) Register(ctx context.Context, ss SignedSta
 	receiptMsg := cose.NewSign1Message()
 	receiptMsg.Payload = payloadRaw
 	receiptMsg.Headers.Protected.SetAlgorithm(cose.AlgorithmEdDSA)
-	receiptMsg.Headers.Unprotected[cose.HeaderLabelKeyID] = s.keyID
+	receiptMsg.Headers.Protected[cose.HeaderLabelKeyID] = s.keyID
 	if err := receiptMsg.Sign(rand.Reader, nil, s.signer); err != nil {
 		return loc, nil, fmt.Errorf("sign receipt: %w", err)
 	}
@@ -210,6 +211,25 @@ func (s *InMemoryTransparencyService) QueryStatus(ctx context.Context, loc Locat
 	})
 
 	return status, s.receipts[loc.ID], nil
+}
+
+// Statement retrieves a registered statement by ID.
+func (s *InMemoryTransparencyService) Statement(ctx context.Context, id string) (SignedStatement, error) {
+	_ = ctx
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	stmt, ok := s.statements[id]
+	if !ok {
+		return SignedStatement{}, errors.New("statement not found")
+	}
+	// Return copies of slices to avoid mutation.
+	out := SignedStatement{
+		Raw: append([]byte{}, stmt.Raw...),
+		Msg: stmt.Msg,
+	}
+	return out, nil
 }
 
 // ResolveReceipt fetches a receipt by ID.
@@ -272,7 +292,7 @@ func (s *InMemoryTransparencyService) completeAsync(id string) {
 	receiptMsg := cose.NewSign1Message()
 	receiptMsg.Payload = payloadRaw
 	receiptMsg.Headers.Protected.SetAlgorithm(cose.AlgorithmEdDSA)
-	receiptMsg.Headers.Unprotected[cose.HeaderLabelKeyID] = s.keyID
+	receiptMsg.Headers.Protected[cose.HeaderLabelKeyID] = s.keyID
 	if err := receiptMsg.Sign(rand.Reader, nil, s.signer); err != nil {
 		return
 	}
@@ -383,7 +403,7 @@ func (s *InMemoryTransparencyService) updateSTHLocked() {
 	msg := cose.NewSign1Message()
 	msg.Payload = payloadRaw
 	msg.Headers.Protected.SetAlgorithm(cose.AlgorithmEdDSA)
-	msg.Headers.Unprotected[cose.HeaderLabelKeyID] = s.keyID
+	msg.Headers.Protected[cose.HeaderLabelKeyID] = s.keyID
 	if err := msg.Sign(rand.Reader, nil, s.signer); err != nil {
 		return
 	}

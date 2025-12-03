@@ -17,34 +17,35 @@ type Client struct {
 	Token      string
 }
 
-// Register posts a COSE_Sign1 payload to /entries and returns the locator ID and receipt bytes.
+// Register posts a COSE_Sign1 payload to /statements and returns the locator ID and optional receipt bytes.
 func (c *Client) Register(ctx context.Context, cosePayload []byte) (string, []byte, error) {
-	return c.RegisterWithContentType(ctx, cosePayload, "application/cose")
+	return c.RegisterWithContentType(ctx, cosePayload, "application/scitt-statement+cose")
 }
 
-// RegisterWithContentType posts a payload to /entries with the given content type.
+// RegisterWithContentType posts a payload to /statements with the given content type.
 func (c *Client) RegisterWithContentType(ctx context.Context, payload []byte, contentType string) (string, []byte, error) {
 	client := c.HTTPClient
 	if client == nil {
 		client = http.DefaultClient
 	}
 
-	endpoint := strings.TrimSuffix(c.BaseURL, "/") + "/entries"
+	endpoint := strings.TrimSuffix(c.BaseURL, "/") + "/statements"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return "", nil, fmt.Errorf("build request: %w", err)
 	}
 	if contentType == "" {
-		contentType = "application/cose"
+		contentType = "application/scitt-statement+cose"
 	}
 	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Accept", "application/scitt-receipt+cose")
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", nil, fmt.Errorf("POST entries: %w", err)
+		return "", nil, fmt.Errorf("POST statements: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -75,7 +76,7 @@ func (c *Client) RegisterWithContentType(ctx context.Context, payload []byte, co
 	return locator, receipt, nil
 }
 
-// FetchReceipt polls /entries/{id} until success or a max number of attempts.
+// FetchReceipt polls /receipts/{id} until success or a max number of attempts.
 func (c *Client) FetchReceipt(ctx context.Context, id string, maxAttempts int, delay time.Duration) ([]byte, error) {
 	client := c.HTTPClient
 	if client == nil {
@@ -85,17 +86,18 @@ func (c *Client) FetchReceipt(ctx context.Context, id string, maxAttempts int, d
 		maxAttempts = 1
 	}
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(c.BaseURL, "/")+"/entries/"+id, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(c.BaseURL, "/")+"/receipts/"+id, nil)
 		if err != nil {
 			return nil, fmt.Errorf("build request: %w", err)
 		}
 		if c.Token != "" {
 			req.Header.Set("Authorization", "Bearer "+c.Token)
 		}
+		req.Header.Set("Accept", "application/scitt-receipt+cose")
 
 		resp, err := client.Do(req)
 		if err != nil {
-			return nil, fmt.Errorf("GET entries/%s: %w", id, err)
+			return nil, fmt.Errorf("GET receipts/%s: %w", id, err)
 		}
 		if resp.StatusCode == http.StatusOK {
 			defer resp.Body.Close()
@@ -103,7 +105,7 @@ func (c *Client) FetchReceipt(ctx context.Context, id string, maxAttempts int, d
 		}
 		// #nosec G104
 		resp.Body.Close()
-		if resp.StatusCode == http.StatusAccepted && attempt < maxAttempts {
+		if (resp.StatusCode == http.StatusAccepted || resp.StatusCode == http.StatusNotFound) && attempt < maxAttempts {
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
