@@ -49,7 +49,9 @@ This page collects runnable flows. Each section is intended to be copy/paste fri
      -dtrack-scrapi-base http://localhost:8080 \
      -dtrack-scrapi-log-key-pin "$(cat /tmp/log-public-key.pem)" \
      -dtrack-scrapi-trusted-sbom-key /tmp/demo-sbom-signer-pub.pem \
-     -dtrack-scrapi-strict
+     -dtrack-scrapi-trusted-sbom-jwks http://localhost:8000/jwks.json \ # optional JWKS demo
+     -dtrack-scrapi-strict \
+     -dtrack-poll -dtrack-poll-attempts 10 -dtrack-poll-interval 2s
    ```
    - The client uploads the SBOM via `/api/v1/bom` and prints the processing token/project reference. Watch Dependency-Track UI or API for findings while the SCRAPI locator/receipt keep the SBOM tamper-evident.
 5. **(Optional) Sign and register findings**  

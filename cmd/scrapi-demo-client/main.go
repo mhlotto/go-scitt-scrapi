@@ -52,6 +52,17 @@ func main() {
 	dtrackVersion := flag.String("dtrack-version", "", "Dependency-Track project version (required if no project UUID)")
 	dtrackProjectUUID := flag.String("dtrack-project-uuid", "", "Dependency-Track project UUID (optional alternative to name/version)")
 	dtrackAutoCreate := flag.Bool("dtrack-auto-create", false, "Allow Dependency-Track to auto-create the project when name/version are used")
+	dtrackReceipt := flag.String("dtrack-scrapi-receipt", "", "Path to SCRAPI receipt (COSE) to send with Dependency-Track upload")
+	dtrackSbomCose := flag.String("dtrack-sbom-cose", "", "Path to SBOM COSE_Sign1 (producer signature) to send with Dependency-Track upload")
+	dtrackScrapiBase := flag.String("dtrack-scrapi-base", "", "SCRAPI base URL (for Dependency-Track to fetch well-known config)")
+	dtrackScrapiLogKeyPin := flag.String("dtrack-scrapi-log-key-pin", "", "Pinned SCRAPI log public key (PEM) for Dependency-Track verification")
+	dtrackScrapiLogKeyIdPin := flag.String("dtrack-scrapi-log-key-id-pin", "", "Pinned SCRAPI log key id for Dependency-Track verification")
+	dtrackScrapiTrustedSbomKey := flag.String("dtrack-scrapi-trusted-sbom-key", "", "Trusted producer public key (PEM) for SBOM signature verification")
+	dtrackScrapiStrict := flag.Bool("dtrack-scrapi-strict", false, "Enable strict SCRAPI verification in Dependency-Track")
+	dtrackScrapiLocator := flag.String("dtrack-scrapi-locator", "", "Optional SCRAPI locator to include with Dependency-Track upload")
+	dtrackPoll := flag.Bool("dtrack-poll", false, "Poll Dependency-Track for BOM processing status using returned token")
+	dtrackPollAttempts := flag.Int("dtrack-poll-attempts", 10, "Max polling attempts for Dependency-Track token")
+	dtrackPollInterval := flag.Duration("dtrack-poll-interval", 2*time.Second, "Polling interval for Dependency-Track token")
 	flag.Parse()
 
 	payload, contentType, checkLeaf, err := loadPayload(*file, *sbom, *vex, *message, *wrapSBOM, *expectLeaf)
@@ -122,8 +133,23 @@ func main() {
 	}
 
 	if *dtrackURL != "" {
-		if err := uploadToDependencyTrack(ctx, httpClient, *dtrackURL, *dtrackAPIKey, *sbom, *dtrackProjectUUID, *dtrackProject, *dtrackVersion, *dtrackAutoCreate); err != nil {
+		token, err := uploadToDependencyTrack(ctx, httpClient, *dtrackURL, *dtrackAPIKey, *sbom, *dtrackProjectUUID, *dtrackProject, *dtrackVersion, *dtrackAutoCreate,
+			*dtrackReceipt, *dtrackSbomCose, *dtrackScrapiBase, *dtrackScrapiLogKeyPin, *dtrackScrapiLogKeyIdPin,
+			*dtrackScrapiTrustedSbomKey, *dtrackScrapiStrict, *dtrackScrapiLocator)
+		if err != nil {
 			log.Fatalf("upload to dependency-track: %v", err)
+		}
+		if *dtrackPoll && token != "" {
+			fmt.Printf("Polling Dependency-Track for token %s ...\n", token)
+			status, err := pollDependencyTrack(ctx, httpClient, *dtrackURL, *dtrackAPIKey, token, *dtrackPollAttempts, *dtrackPollInterval)
+			if err != nil {
+				log.Fatalf("poll dependency-track: %v", err)
+			}
+			if status {
+				fmt.Println("Dependency-Track still processing after polling")
+			} else {
+				fmt.Println("Dependency-Track reports processing complete")
+			}
 		}
 	}
 }
@@ -388,18 +414,19 @@ func fetchAndPersistConfig(ctx context.Context, httpClient *http.Client, baseURL
 }
 
 // uploadToDependencyTrack pushes a CycloneDX SBOM to Dependency-Track using the /api/v1/bom endpoint.
-func uploadToDependencyTrack(ctx context.Context, httpClient *http.Client, baseURL, apiKey, sbomPath, projectUUID, projectName, projectVersion string, autoCreate bool) error {
+func uploadToDependencyTrack(ctx context.Context, httpClient *http.Client, baseURL, apiKey, sbomPath, projectUUID, projectName, projectVersion string, autoCreate bool,
+	receiptPath, sbomCosePath, scrapiBase, scrapiLogKeyPin, scrapiLogKeyIdPin, scrapiTrustedSbomKey string, scrapiStrict bool, scrapiLocator string) (string, error) {
 	if baseURL == "" {
-		return fmt.Errorf("dtrack-url is required")
+		return "", fmt.Errorf("dtrack-url is required")
 	}
 	if apiKey == "" {
-		return fmt.Errorf("dtrack-api-key is required")
+		return "", fmt.Errorf("dtrack-api-key is required")
 	}
 	if sbomPath == "" {
-		return fmt.Errorf("sbom path is required when uploading to Dependency-Track")
+		return "", fmt.Errorf("sbom path is required when uploading to Dependency-Track")
 	}
 	if projectUUID == "" && (projectName == "" || projectVersion == "") {
-		return fmt.Errorf("either dtrack-project-uuid or both dtrack-project and dtrack-version are required")
+		return "", fmt.Errorf("either dtrack-project-uuid or both dtrack-project and dtrack-version are required")
 	}
 
 	file, err := os.Open(filepath.Clean(sbomPath))
@@ -413,28 +440,57 @@ func uploadToDependencyTrack(ctx context.Context, httpClient *http.Client, baseU
 
 	if projectUUID != "" {
 		if err := writer.WriteField("project", projectUUID); err != nil {
-			return fmt.Errorf("write project field: %w", err)
+			return "", fmt.Errorf("write project field: %w", err)
 		}
 	} else {
 		if err := writer.WriteField("projectName", projectName); err != nil {
-			return fmt.Errorf("write projectName: %w", err)
+			return "", fmt.Errorf("write projectName: %w", err)
 		}
 		if err := writer.WriteField("projectVersion", projectVersion); err != nil {
-			return fmt.Errorf("write projectVersion: %w", err)
+			return "", fmt.Errorf("write projectVersion: %w", err)
 		}
 		if autoCreate {
 			if err := writer.WriteField("autoCreate", "true"); err != nil {
-				return fmt.Errorf("write autoCreate: %w", err)
+				return "", fmt.Errorf("write autoCreate: %w", err)
 			}
 		}
 	}
 
 	part, err := writer.CreateFormFile("bom", filepath.Base(sbomPath))
 	if err != nil {
-		return fmt.Errorf("create bom part: %w", err)
+		return "", fmt.Errorf("create bom part: %w", err)
 	}
 	if _, err := io.Copy(part, file); err != nil {
-		return fmt.Errorf("copy bom: %w", err)
+		return "", fmt.Errorf("copy bom: %w", err)
+	}
+
+	if receiptPath != "" {
+		if err := addFilePart(writer, "receipt", receiptPath); err != nil {
+			return "", err
+		}
+	}
+	if sbomCosePath != "" {
+		if err := addFilePart(writer, "sbomSignature", sbomCosePath); err != nil {
+			return "", err
+		}
+	}
+	if scrapiBase != "" {
+		_ = writer.WriteField("scrapiBaseUrl", scrapiBase)
+	}
+	if scrapiLogKeyPin != "" {
+		_ = writer.WriteField("scrapiLogKeyPin", scrapiLogKeyPin)
+	}
+	if scrapiLogKeyIdPin != "" {
+		_ = writer.WriteField("scrapiLogKeyIdPin", scrapiLogKeyIdPin)
+	}
+	if scrapiTrustedSbomKey != "" {
+		_ = writer.WriteField("scrapiTrustedSbomKey", scrapiTrustedSbomKey)
+	}
+	if scrapiStrict {
+		_ = writer.WriteField("scrapiStrict", "true")
+	}
+	if scrapiLocator != "" {
+		_ = writer.WriteField("scrapiLocator", scrapiLocator)
 	}
 	if err := writer.Close(); err != nil {
 		return fmt.Errorf("close multipart: %w", err)
@@ -443,7 +499,7 @@ func uploadToDependencyTrack(ctx context.Context, httpClient *http.Client, baseU
 	uploadURL := strings.TrimSuffix(baseURL, "/") + "/api/v1/bom"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, &body)
 	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+		return "", fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("X-Api-Key", apiKey)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
@@ -453,12 +509,12 @@ func uploadToDependencyTrack(ctx context.Context, httpClient *http.Client, baseU
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("upload request failed: %w", err)
+		return "", fmt.Errorf("upload request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("dependency-track upload status %s: %s", resp.Status, string(respBody))
+		return "", fmt.Errorf("dependency-track upload status %s: %s", resp.Status, string(respBody))
 	}
 
 	var parsed struct {
@@ -479,5 +535,50 @@ func uploadToDependencyTrack(ctx context.Context, httpClient *http.Client, baseU
 		fmt.Printf("  (no token returned in response)\n")
 	}
 
+	return parsed.Token, nil
+}
+
+func addFilePart(writer *multipart.Writer, field, path string) error {
+	f, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return fmt.Errorf("open %s: %w", field, err)
+	}
+	defer f.Close()
+	part, err := writer.CreateFormFile(field, filepath.Base(path))
+	if err != nil {
+		return fmt.Errorf("create part %s: %w", field, err)
+	}
+	if _, err := io.Copy(part, f); err != nil {
+		return fmt.Errorf("copy part %s: %w", field, err)
+	}
 	return nil
+}
+
+func pollDependencyTrack(ctx context.Context, httpClient *http.Client, baseURL, apiKey, token string, attempts int, interval time.Duration) (bool, error) {
+	statusURL := strings.TrimSuffix(baseURL, "/") + "/api/v1/bom/token/" + token
+	for i := 0; i < attempts; i++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, statusURL, nil)
+		if err != nil {
+			return false, fmt.Errorf("build poll request: %w", err)
+		}
+		req.Header.Set("X-Api-Key", apiKey)
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return false, fmt.Errorf("poll request failed: %w", err)
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024))
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return false, fmt.Errorf("poll status %s: %s", resp.Status, string(body))
+		}
+		var parsed struct {
+			Processing bool `json:"processing"`
+		}
+		_ = json.Unmarshal(body, &parsed)
+		if !parsed.Processing {
+			return false, nil
+		}
+		time.Sleep(interval)
+	}
+	return true, nil
 }

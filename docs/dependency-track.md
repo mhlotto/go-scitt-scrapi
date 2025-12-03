@@ -19,11 +19,13 @@ How we hand the SCRAPI-anchored SBOM to Dependency-Track and keep the chain of c
 - SCRAPI verification extras (optional, sent with the upload):
   - `-dtrack-scrapi-receipt` `<path>`: COSE receipt.
   - `-dtrack-sbom-cose` `<path>`: COSE_Sign1 of the SBOM (producer signature).
-  - `-dtrack-scrapi-base` `<url>`: SCRAPI base URL for fetching well-known config.
-  - `-dtrack-scrapi-log-key-pin` `<pem>` / `-dtrack-scrapi-log-key-id-pin` `<id>`: pin the log key/key id.
-  - `-dtrack-scrapi-trusted-sbom-key` `<pem>`: trusted producer key (PEM).
-  - `-dtrack-scrapi-strict`: enable strict receipt checks (log_id/hash_alg, etc.).
-  - `-dtrack-scrapi-locator` `<id>`: optional locator string for logging/notification context.
+- `-dtrack-scrapi-base` `<url>`: SCRAPI base URL for fetching well-known config.
+- `-dtrack-scrapi-log-key-pin` `<pem>` / `-dtrack-scrapi-log-key-id-pin` `<id>`: pin the log key/key id.
+- `-dtrack-scrapi-trusted-sbom-key` `<pem>`: trusted producer key (PEM).
+- `-dtrack-scrapi-trusted-sbom-jwks` `<url>`: trusted producer JWKS (Ed25519, `use=sig`).
+- `-dtrack-scrapi-strict`: enable strict receipt checks (log_id/hash_alg, etc.).
+- `-dtrack-scrapi-locator` `<id>`: optional locator string for logging/notification context.
+- `-dtrack-poll`: poll Dependency-Track for processing status using the returned token (with `-dtrack-poll-attempts` / `-dtrack-poll-interval`).
 
 ## Typical flow
 1) Generate/sign SBOM and register with SCRAPI to get `locator` and `receipt`.  
