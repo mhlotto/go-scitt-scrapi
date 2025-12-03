@@ -20,6 +20,8 @@ type TransparencyService interface {
 	Register(ctx context.Context, ss SignedStatement) (Locator, *Receipt, error)
 	QueryStatus(ctx context.Context, loc Locator) (RegistrationStatus, *Receipt, error)
 	ResolveReceipt(ctx context.Context, id string) (*Receipt, error)
+	CurrentSTH(ctx context.Context) (*SignedTreeHead, error)
+	ConsistencyProof(ctx context.Context, firstSize, secondSize uint64) ([]ProofNode, error)
 }
 
 // AuditRecord tracks notable service events for operators.
@@ -43,8 +45,15 @@ type InMemoryTransparencyService struct {
 	pubKey     ed25519.PublicKey
 	keyID      []byte
 	logID      string
+	lastSTH    *SignedTreeHead
 	async      bool
 	asyncDelay time.Duration
+}
+
+// SignedTreeHead captures an STH Sign1 message and raw bytes.
+type SignedTreeHead struct {
+	Raw []byte
+	Msg *cose.Sign1Message
 }
 
 // NewInMemoryTransparencyService constructs an empty in-memory service.
@@ -80,6 +89,8 @@ func newInMemoryTransparencyService(async bool, delay time.Duration) *InMemoryTr
 		async:      async,
 		asyncDelay: delay,
 	}
+	s.updateSTH()
+	return s
 }
 
 // Register stores the signed statement and immediately produces a dummy receipt.
@@ -160,6 +171,7 @@ func (s *InMemoryTransparencyService) Register(ctx context.Context, ss SignedSta
 
 	s.receipts[id] = receipt
 	s.statuses[id] = StatusSuccess
+	s.updateSTHLocked()
 	s.audits = append(s.audits, AuditRecord{
 		Time:    time.Now().UTC(),
 		Event:   "register",
@@ -265,6 +277,7 @@ func (s *InMemoryTransparencyService) completeAsync(id string) {
 
 	s.receipts[id] = receipt
 	s.statuses[id] = StatusSuccess
+	s.updateSTHLocked()
 	s.audits = append(s.audits, AuditRecord{
 		Time:    time.Now().UTC(),
 		Event:   "register-complete",
@@ -306,4 +319,65 @@ func (s *InMemoryTransparencyService) LogKeyID() []byte {
 // LogID returns the logical log identifier for receipts.
 func (s *InMemoryTransparencyService) LogID() string {
 	return s.logID
+}
+
+// CurrentSTH returns the latest signed tree head.
+func (s *InMemoryTransparencyService) CurrentSTH(ctx context.Context) (*SignedTreeHead, error) {
+	_ = ctx
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.lastSTH == nil {
+		return nil, errors.New("no STH available")
+	}
+	return &SignedTreeHead{
+		Raw: append([]byte{}, s.lastSTH.Raw...),
+		Msg: s.lastSTH.Msg, // Msg contains slices; treat as read-only
+	}, nil
+}
+
+// ConsistencyProof returns a proof between two tree sizes.
+func (s *InMemoryTransparencyService) ConsistencyProof(ctx context.Context, firstSize, secondSize uint64) ([]ProofNode, error) {
+	_ = ctx
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.tree.ConsistencyProof(int(firstSize), int(secondSize))
+}
+
+func (s *InMemoryTransparencyService) updateSTH() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.updateSTHLocked()
+}
+
+func (s *InMemoryTransparencyService) updateSTHLocked() {
+	root := s.tree.Root()
+	size := s.tree.Size()
+	sizeUint, err := safeUint64(size)
+	if err != nil {
+		return
+	}
+	payload := STHPayload{
+		LogID:     s.logID,
+		RootHash:  root,
+		TreeSize:  sizeUint,
+		HashAlg:   "sha-256",
+		Timestamp: time.Now().UTC().Unix(),
+	}
+	payloadRaw, err := cbor.Marshal(payload)
+	if err != nil {
+		return
+	}
+
+	msg := cose.NewSign1Message()
+	msg.Payload = payloadRaw
+	msg.Headers.Protected.SetAlgorithm(cose.AlgorithmEdDSA)
+	msg.Headers.Unprotected[cose.HeaderLabelKeyID] = s.keyID
+	if err := msg.Sign(rand.Reader, nil, s.signer); err != nil {
+		return
+	}
+	raw, err := msg.MarshalCBOR()
+	if err != nil {
+		return
+	}
+	s.lastSTH = &SignedTreeHead{Raw: raw, Msg: msg}
 }

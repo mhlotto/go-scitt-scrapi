@@ -24,6 +24,15 @@ type ReceiptPayload struct {
 	Timestamp int64       `cbor:"ts"`
 }
 
+// STHPayload describes the signed content of a Signed Tree Head.
+type STHPayload struct {
+	LogID     string `cbor:"log_id,omitempty"`
+	RootHash  []byte `cbor:"root"`
+	TreeSize  uint64 `cbor:"size"`
+	HashAlg   string `cbor:"hash_alg,omitempty"`
+	Timestamp int64  `cbor:"ts"`
+}
+
 // RegistrationStatus tracks the state of a registration.
 type RegistrationStatus string
 
@@ -41,9 +50,9 @@ type Locator struct {
 
 // ProblemDetails mirrors Concise Problem Details fields used on the wire.
 type ProblemDetails struct {
-	Type   string `json:"type,omitempty"`
-	Title  string `json:"title,omitempty"`
-	Detail string `json:"detail,omitempty"`
-	Status int    `json:"status,omitempty"`
+	Type     string `json:"type,omitempty"`
+	Title    string `json:"title,omitempty"`
+	Detail   string `json:"detail,omitempty"`
+	Status   int    `json:"status,omitempty"`
 	Instance string `json:"instance,omitempty"`
 }

@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/fxamacker/cbor/v2"
@@ -36,6 +37,8 @@ func NewMux(opts HandlerOptions) http.Handler {
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/.well-known/transparency-configuration", transparencyConfigHandler(opts, logger))
+	mux.Handle("/.well-known/transparency-sth", sthHandler(opts, logger))
+	mux.Handle("/consistency", consistencyHandler(opts, logger))
 	mux.Handle("/entries", registerHandler(opts, logger))
 	mux.Handle("/entries/", queryStatusHandler(opts, logger))
 	mux.Handle("/receipts/", resolveReceiptHandler(opts, logger))
@@ -73,6 +76,8 @@ func transparencyConfigHandler(opts HandlerOptions, logger *log.Logger) http.Han
 		if len(opts.AuthSchemes) > 0 {
 			cfg["auth_schemes"] = opts.AuthSchemes
 		}
+		cfg["sth_endpoint"] = "/.well-known/transparency-sth"
+		cfg["consistency_endpoint"] = "/consistency"
 
 		payload, err := cbor.Marshal(cfg)
 		if err != nil {
@@ -84,6 +89,63 @@ func transparencyConfigHandler(opts HandlerOptions, logger *log.Logger) http.Han
 		w.Header().Set("Content-Type", "application/cbor")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(payload)
+	}
+}
+
+func sthHandler(opts HandlerOptions, logger *log.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if err := authorize(opts, r); err != nil {
+			writeProblem(w, http.StatusUnauthorized, "unauthorized", err.Error())
+			return
+		}
+		sth, err := opts.Service.CurrentSTH(r.Context())
+		if err != nil {
+			writeProblem(w, http.StatusNotFound, "sth not available", err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/cose")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(sth.Raw)
+		logger.Printf("served STH bytes=%d", len(sth.Raw))
+	}
+}
+
+func consistencyHandler(opts HandlerOptions, logger *log.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if err := authorize(opts, r); err != nil {
+			writeProblem(w, http.StatusUnauthorized, "unauthorized", err.Error())
+			return
+		}
+		firstStr := r.URL.Query().Get("first")
+		secondStr := r.URL.Query().Get("second")
+		first, err1 := strconv.ParseUint(firstStr, 10, 64)
+		second, err2 := strconv.ParseUint(secondStr, 10, 64)
+		if err1 != nil || err2 != nil {
+			writeProblem(w, http.StatusBadRequest, "invalid parameters", "first and second must be integers")
+			return
+		}
+		proof, err := opts.Service.ConsistencyProof(r.Context(), first, second)
+		if err != nil {
+			writeProblem(w, http.StatusBadRequest, "consistency proof failed", err.Error())
+			return
+		}
+		payload, err := cbor.Marshal(proof)
+		if err != nil {
+			writeProblem(w, http.StatusInternalServerError, "encode proof", err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/cbor")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(payload)
+		logger.Printf("served consistency proof first=%d second=%d nodes=%d", first, second, len(proof))
 	}
 }
 
