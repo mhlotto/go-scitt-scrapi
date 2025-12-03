@@ -25,7 +25,7 @@ func MerkleNodeHash(left, right []byte) []byte {
 
 // ProofNode describes a single step in a Merkle inclusion path.
 type ProofNode struct {
-	Position string `cbor:"pos"` // "left" or "right"
+	Position string `cbor:"pos"` // "left" or "right" (for inclusion); "subtree" for consistency
 	Hash     []byte `cbor:"hash"`
 }
 
@@ -139,7 +139,8 @@ func (t *MerkleTree) ConsistencyProof(firstSize, secondSize int) ([]ProofNode, e
 
 	out := make([]ProofNode, len(proof))
 	for i, h := range proof {
-		out[i] = ProofNode{Position: "consistency", Hash: h}
+		// Encode consistency proof as subtree hash steps; client recomputes per CT spec.
+		out[i] = ProofNode{Position: "subtree", Hash: h}
 	}
 	return out, nil
 }
