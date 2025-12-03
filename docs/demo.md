@@ -43,7 +43,13 @@ This page collects runnable flows. Each section is intended to be copy/paste fri
      -dtrack-api-key <your-api-key> \
      -dtrack-project "scrapi-demo" \
      -dtrack-version "1.0.0" \
-     -dtrack-auto-create
+     -dtrack-auto-create \
+     -dtrack-scrapi-receipt /tmp/demo-receipt.cose \
+     -dtrack-sbom-cose /tmp/demo-sbom.cose \
+     -dtrack-scrapi-base http://localhost:8080 \
+     -dtrack-scrapi-log-key-pin "$(cat /tmp/log-public-key.pem)" \
+     -dtrack-scrapi-trusted-sbom-key /tmp/demo-sbom-signer-pub.pem \
+     -dtrack-scrapi-strict
    ```
    - The client uploads the SBOM via `/api/v1/bom` and prints the processing token/project reference. Watch Dependency-Track UI or API for findings while the SCRAPI locator/receipt keep the SBOM tamper-evident.
 5. **(Optional) Sign and register findings**  

@@ -16,6 +16,14 @@ How we hand the SCRAPI-anchored SBOM to Dependency-Track and keep the chain of c
 - `-dtrack-project-uuid` `<uuid>`: Optional direct UUID if you already know the project.
 - `-dtrack-auto-create`: Auto-create project when name/version do not exist.
 - `-sbom` must be set so the client can upload the raw CycloneDX JSON (it does not send the COSE envelope to Dependency-Track).
+- SCRAPI verification extras (optional, sent with the upload):
+  - `-dtrack-scrapi-receipt` `<path>`: COSE receipt.
+  - `-dtrack-sbom-cose` `<path>`: COSE_Sign1 of the SBOM (producer signature).
+  - `-dtrack-scrapi-base` `<url>`: SCRAPI base URL for fetching well-known config.
+  - `-dtrack-scrapi-log-key-pin` `<pem>` / `-dtrack-scrapi-log-key-id-pin` `<id>`: pin the log key/key id.
+  - `-dtrack-scrapi-trusted-sbom-key` `<pem>`: trusted producer key (PEM).
+  - `-dtrack-scrapi-strict`: enable strict receipt checks (log_id/hash_alg, etc.).
+  - `-dtrack-scrapi-locator` `<id>`: optional locator string for logging/notification context.
 
 ## Typical flow
 1) Generate/sign SBOM and register with SCRAPI to get `locator` and `receipt`.  
@@ -31,3 +39,4 @@ How we hand the SCRAPI-anchored SBOM to Dependency-Track and keep the chain of c
 - Permissions: API key must allow BOM uploads; auto-create requires portfolio/project-create perms.
 - TLS/mTLS: reuse `-tls-ca`/`-tls-cert`/`-tls-key` flags to talk to Dependency-Track over HTTPS if needed.
 - Token handling: the helper only prints the upload token; it does not poll analysis status yet. Use the UI or API to check progress and export findings.
+- JWKS: SBOM signature verification now supports a JWKS URL via `-dtrack-scrapi-trusted-sbom-jwks` (Ed25519 keys, `use=sig`, optional `alg=EdDSA`).
