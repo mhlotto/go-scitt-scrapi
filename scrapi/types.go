@@ -14,28 +14,29 @@ type Receipt struct {
 	Msg *cose.Sign1Message
 }
 
-// ReceiptPayload describes the signed content inside a receipt.
+// ReceiptPayload describes the signed content inside a receipt, following SCITT receipt structure.
 type ReceiptPayload struct {
-	LogID         string      `cbor:"log_id,omitempty"`
-	HashAlg       string      `cbor:"hash_alg,omitempty"`
-	TreeType      string      `cbor:"tree_type,omitempty"`
-	ScrapiVersion string      `cbor:"scrapi_version,omitempty"`
-	LeafHash      []byte      `cbor:"leaf"`
-	RootHash      []byte      `cbor:"root"`
-	TreeSize      uint64      `cbor:"size"`
-	Path          []ProofNode `cbor:"path"`
-	Timestamp     int64       `cbor:"ts"`
+	StatementHash  []byte         `cbor:"statement_hash"`
+	TreeHead       TreeHead       `cbor:"tree_head"`
+	InclusionProof [][]byte       `cbor:"inclusion_proof"`
+	LeafIndex      uint64         `cbor:"leaf_index"`
+	Extensions     map[string]any `cbor:"extensions,omitempty"`
+}
+
+// TreeHead captures the tree head embedded in receipts and STHs.
+type TreeHead struct {
+	LogID         string `cbor:"log_id,omitempty"`
+	RootHash      []byte `cbor:"root_hash"`
+	TreeSize      uint64 `cbor:"tree_size"`
+	HashAlg       string `cbor:"hash_alg,omitempty"`
+	TreeType      string `cbor:"tree_type,omitempty"`
+	ScrapiVersion string `cbor:"scrapi_version,omitempty"`
+	Timestamp     int64  `cbor:"timestamp"`
 }
 
 // STHPayload describes the signed content of a Signed Tree Head.
 type STHPayload struct {
-	LogID         string `cbor:"log_id,omitempty"`
-	RootHash      []byte `cbor:"root"`
-	TreeSize      uint64 `cbor:"size"`
-	HashAlg       string `cbor:"hash_alg,omitempty"`
-	TreeType      string `cbor:"tree_type,omitempty"`
-	ScrapiVersion string `cbor:"scrapi_version,omitempty"`
-	Timestamp     int64  `cbor:"ts"`
+	TreeHead TreeHead `cbor:"tree_head"`
 }
 
 // RegistrationStatus tracks the state of a registration.

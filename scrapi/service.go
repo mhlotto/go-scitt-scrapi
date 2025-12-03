@@ -22,7 +22,7 @@ type TransparencyService interface {
 	ResolveReceipt(ctx context.Context, id string) (*Receipt, error)
 	Statement(ctx context.Context, id string) (SignedStatement, error)
 	CurrentSTH(ctx context.Context) (*SignedTreeHead, error)
-	ConsistencyProof(ctx context.Context, firstSize, secondSize uint64) ([]ProofNode, error)
+	ConsistencyProof(ctx context.Context, firstSize, secondSize uint64) ([][]byte, error)
 }
 
 // AuditRecord tracks notable service events for operators.
@@ -83,7 +83,7 @@ func newInMemoryTransparencyService(async bool, delay time.Duration) *InMemoryTr
 		statements:    make(map[string]SignedStatement),
 		receipts:      make(map[string]*Receipt),
 		statuses:      make(map[string]RegistrationStatus),
-		tree:          &MerkleTree{},
+		tree:          NewMerkleTree("scrapi-merkle.cbor"),
 		signer:        signer,
 		pubKey:        pub,
 		keyID:         []byte("demo-log-key"),
@@ -106,8 +106,8 @@ func (s *InMemoryTransparencyService) Register(ctx context.Context, ss SignedSta
 		return Locator{}, nil, fmt.Errorf("signed statement is empty")
 	}
 
-	digest := sha256.Sum256(ss.Raw)
-	id := hex.EncodeToString(digest[:])
+	statementDigest := sha256.Sum256(ss.Raw)
+	id := hex.EncodeToString(statementDigest[:])
 	loc := Locator{ID: id}
 
 	s.mu.Lock()
@@ -140,21 +140,27 @@ func (s *InMemoryTransparencyService) Register(ctx context.Context, ss SignedSta
 		return loc, nil, nil
 	}
 
-	leaf, root, path, size := s.tree.Append(ss.Raw)
+	_, root, proof, size, err := s.tree.Append(ss.Raw)
+	if err != nil {
+		return Locator{}, nil, err
+	}
 	sizeUint, err := safeUint64(size)
 	if err != nil {
 		return Locator{}, nil, err
 	}
 	payload := ReceiptPayload{
-		LogID:         s.logID,
-		HashAlg:       "sha-256",
-		TreeType:      s.treeType,
-		ScrapiVersion: s.scrapiVersion,
-		LeafHash:      leaf,
-		RootHash:      root,
-		TreeSize:      sizeUint,
-		Path:          path,
-		Timestamp:     time.Now().UTC().Unix(),
+		StatementHash: statementDigest[:],
+		TreeHead: TreeHead{
+			LogID:         s.logID,
+			HashAlg:       "sha-256",
+			TreeType:      s.treeType,
+			ScrapiVersion: s.scrapiVersion,
+			RootHash:      root,
+			TreeSize:      sizeUint,
+			Timestamp:     time.Now().UTC().Unix(),
+		},
+		InclusionProof: proof,
+		LeafIndex:      sizeUint - 1,
 	}
 	payloadRaw, err := cbor.Marshal(payload)
 	if err != nil {
@@ -268,21 +274,28 @@ func (s *InMemoryTransparencyService) completeAsync(id string) {
 		return
 	}
 
-	leaf, root, path, size := s.tree.Append(ss.Raw)
+	_, root, proof, size, err := s.tree.Append(ss.Raw)
+	if err != nil {
+		return
+	}
 	sizeUint, err := safeUint64(size)
 	if err != nil {
 		return
 	}
+	statementDigest := sha256.Sum256(ss.Raw)
 	payload := ReceiptPayload{
-		LogID:         s.logID,
-		HashAlg:       "sha-256",
-		TreeType:      s.treeType,
-		ScrapiVersion: s.scrapiVersion,
-		LeafHash:      leaf,
-		RootHash:      root,
-		TreeSize:      sizeUint,
-		Path:          path,
-		Timestamp:     time.Now().UTC().Unix(),
+		StatementHash: statementDigest[:],
+		TreeHead: TreeHead{
+			LogID:         s.logID,
+			HashAlg:       "sha-256",
+			TreeType:      s.treeType,
+			ScrapiVersion: s.scrapiVersion,
+			RootHash:      root,
+			TreeSize:      sizeUint,
+			Timestamp:     time.Now().UTC().Unix(),
+		},
+		InclusionProof: proof,
+		LeafIndex:      sizeUint - 1,
 	}
 	payloadRaw, err := cbor.Marshal(payload)
 	if err != nil {
@@ -366,7 +379,7 @@ func (s *InMemoryTransparencyService) CurrentSTH(ctx context.Context) (*SignedTr
 }
 
 // ConsistencyProof returns a proof between two tree sizes.
-func (s *InMemoryTransparencyService) ConsistencyProof(ctx context.Context, firstSize, secondSize uint64) ([]ProofNode, error) {
+func (s *InMemoryTransparencyService) ConsistencyProof(ctx context.Context, firstSize, secondSize uint64) ([][]byte, error) {
 	_ = ctx
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -387,13 +400,15 @@ func (s *InMemoryTransparencyService) updateSTHLocked() {
 		return
 	}
 	payload := STHPayload{
-		LogID:         s.logID,
-		RootHash:      root,
-		TreeSize:      sizeUint,
-		HashAlg:       "sha-256",
-		TreeType:      s.treeType,
-		ScrapiVersion: s.scrapiVersion,
-		Timestamp:     time.Now().UTC().Unix(),
+		TreeHead: TreeHead{
+			LogID:         s.logID,
+			RootHash:      root,
+			TreeSize:      sizeUint,
+			HashAlg:       "sha-256",
+			TreeType:      s.treeType,
+			ScrapiVersion: s.scrapiVersion,
+			Timestamp:     time.Now().UTC().Unix(),
+		},
 	}
 	payloadRaw, err := cbor.Marshal(payload)
 	if err != nil {

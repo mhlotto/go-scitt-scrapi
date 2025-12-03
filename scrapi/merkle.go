@@ -4,43 +4,38 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"math/bits"
+	"os"
+
+	"github.com/fxamacker/cbor/v2"
 )
 
-// MerkleLeafHash computes a leaf hash with domain separation.
-func MerkleLeafHash(data []byte) []byte {
-	h := sha256.New()
-	h.Write([]byte{0x00})
-	h.Write(data)
-	return h.Sum(nil)
-}
-
-// MerkleNodeHash computes a parent hash with domain separation.
-func MerkleNodeHash(left, right []byte) []byte {
-	h := sha256.New()
-	h.Write([]byte{0x01})
-	h.Write(left)
-	h.Write(right)
-	return h.Sum(nil)
-}
-
-// ProofNode describes a single step in a Merkle inclusion path.
-type ProofNode struct {
-	Position string `cbor:"pos"` // "left" or "right" (for inclusion); "subtree" for consistency
-	Hash     []byte `cbor:"hash"`
-}
-
-// MerkleTree is a simple append-only Merkle tree used for demo receipts.
+// RFC9162-style Merkle tree with optional persistence of leaf hashes.
 type MerkleTree struct {
-	leaves [][]byte
+	leaves    [][]byte
+	storePath string
 }
 
-// Append adds a new leaf, returning the leaf hash, root, proof path, and new size.
-func (t *MerkleTree) Append(data []byte) (leaf []byte, root []byte, proof []ProofNode, size int) {
-	leaf = MerkleLeafHash(data)
+// NewMerkleTree constructs a tree and, if storePath is non-empty, loads persisted leaves.
+func NewMerkleTree(storePath string) *MerkleTree {
+	t := &MerkleTree{storePath: storePath}
+	if storePath != "" {
+		_ = t.load()
+	}
+	return t
+}
+
+// Append adds a leaf and returns the leaf hash, root, inclusion proof, and size.
+func (t *MerkleTree) Append(data []byte) (leaf []byte, root []byte, proof [][]byte, size int, err error) {
+	leaf = merkleLeafHash(data)
 	t.leaves = append(t.leaves, leaf)
-	proof = t.buildProof(len(t.leaves) - 1)
+	idx := len(t.leaves) - 1
+	proof = t.inclusionProof(idx)
 	root = t.currentRoot()
-	return leaf, root, proof, len(t.leaves)
+	size = len(t.leaves)
+	if err = t.persist(); err != nil {
+		return nil, nil, nil, 0, err
+	}
+	return leaf, root, proof, size, nil
 }
 
 // Root returns the current tree root.
@@ -48,79 +43,13 @@ func (t *MerkleTree) Root() []byte {
 	return t.currentRoot()
 }
 
-// Size returns the number of leaves in the tree.
+// Size returns the number of leaves.
 func (t *MerkleTree) Size() int {
 	return len(t.leaves)
 }
 
-func (t *MerkleTree) currentRoot() []byte {
-	if len(t.leaves) == 0 {
-		zero := sha256.Sum256(nil)
-		return zero[:]
-	}
-	level := make([][]byte, len(t.leaves))
-	copy(level, t.leaves)
-
-	for len(level) > 1 {
-		var next [][]byte
-		for i := 0; i < len(level); i += 2 {
-			left := level[i]
-			right := left
-			if i+1 < len(level) {
-				right = level[i+1]
-			}
-			parent := MerkleNodeHash(left, right)
-			next = append(next, parent)
-		}
-		level = next
-	}
-	return level[0]
-}
-
-func (t *MerkleTree) buildProof(idx int) []ProofNode {
-	if idx < 0 || idx >= len(t.leaves) {
-		return nil
-	}
-	var proof []ProofNode
-
-	level := make([][]byte, len(t.leaves))
-	copy(level, t.leaves)
-	pos := idx
-
-	for len(level) > 1 {
-		var next [][]byte
-		for i := 0; i < len(level); i += 2 {
-			left := level[i]
-			right := left
-			if i+1 < len(level) {
-				right = level[i+1]
-			}
-			parent := MerkleNodeHash(left, right)
-			next = append(next, parent)
-
-			if i == pos || i+1 == pos {
-				if i+1 < len(level) {
-					if i == pos {
-						proof = append(proof, ProofNode{Position: "right", Hash: right})
-					} else {
-						proof = append(proof, ProofNode{Position: "left", Hash: left})
-					}
-				} else {
-					// odd node duplicated; still note the sibling (same hash)
-					proof = append(proof, ProofNode{Position: "right", Hash: right})
-				}
-				pos = len(next) - 1
-			}
-		}
-		level = next
-	}
-
-	return proof
-}
-
-// ConsistencyProof returns a CT-style consistency proof from firstSize to secondSize.
-// firstSize must be > 0 and <= secondSize; secondSize must be <= current size.
-func (t *MerkleTree) ConsistencyProof(firstSize, secondSize int) ([]ProofNode, error) {
+// ConsistencyProof returns an RFC6962/RFC9162 consistency proof between two sizes.
+func (t *MerkleTree) ConsistencyProof(firstSize, secondSize int) ([][]byte, error) {
 	if firstSize <= 0 {
 		return nil, fmt.Errorf("first size must be positive")
 	}
@@ -136,13 +65,86 @@ func (t *MerkleTree) ConsistencyProof(firstSize, secondSize int) ([]ProofNode, e
 
 	var proof [][]byte
 	buildConsistencyProof(t.leaves[:secondSize], firstSize, secondSize, &proof)
+	return proof, nil
+}
 
-	out := make([]ProofNode, len(proof))
-	for i, h := range proof {
-		// Encode consistency proof as subtree hash steps; client recomputes per CT spec.
-		out[i] = ProofNode{Position: "subtree", Hash: h}
+func (t *MerkleTree) inclusionProof(idx int) [][]byte {
+	if idx < 0 || idx >= len(t.leaves) {
+		return nil
 	}
-	return out, nil
+	proof := make([][]byte, 0, bits.Len(uint(len(t.leaves))))
+
+	level := make([][]byte, len(t.leaves))
+	copy(level, t.leaves)
+	pos := idx
+
+	for len(level) > 1 {
+		var next [][]byte
+		for i := 0; i < len(level); i += 2 {
+			left := level[i]
+			right := left
+			if i+1 < len(level) {
+				right = level[i+1]
+			}
+			parent := merkleNodeHash(left, right)
+			next = append(next, parent)
+
+			if i == pos || i+1 == pos {
+				if i+1 < len(level) {
+					// sibling exists
+					if i == pos {
+						proof = append(proof, right)
+					} else {
+						proof = append(proof, left)
+					}
+				} else {
+					// duplicated last node
+					proof = append(proof, right)
+				}
+				pos = len(next) - 1
+			}
+		}
+		level = next
+	}
+	return proof
+}
+
+func (t *MerkleTree) currentRoot() []byte {
+	if len(t.leaves) == 0 {
+		zero := sha256.Sum256(nil)
+		return zero[:]
+	}
+	level := make([][]byte, len(t.leaves))
+	copy(level, t.leaves)
+	for len(level) > 1 {
+		var next [][]byte
+		for i := 0; i < len(level); i += 2 {
+			left := level[i]
+			right := left
+			if i+1 < len(level) {
+				right = level[i+1]
+			}
+			parent := merkleNodeHash(left, right)
+			next = append(next, parent)
+		}
+		level = next
+	}
+	return level[0]
+}
+
+func merkleLeafHash(data []byte) []byte {
+	h := sha256.New()
+	h.Write([]byte{0x00})
+	h.Write(data)
+	return h.Sum(nil)
+}
+
+func merkleNodeHash(left, right []byte) []byte {
+	h := sha256.New()
+	h.Write([]byte{0x01})
+	h.Write(left)
+	h.Write(right)
+	return h.Sum(nil)
 }
 
 // buildConsistencyProof implements RFC6962 section 2.1.2 for a slice of leaf hashes.
@@ -155,11 +157,9 @@ func buildConsistencyProof(leaves [][]byte, firstSize, secondSize int, proof *[]
 
 	switch {
 	case firstSize <= k:
-		// proof for (m, k) plus subtree hash for right sibling
 		buildConsistencyProof(leaves[:k], firstSize, k, proof)
 		*proof = append(*proof, merkleRoot(leaves[k:secondSize]))
 	case firstSize > k:
-		// proof for (m-k, n-k) plus subtree hash for left sibling
 		buildConsistencyProof(leaves[k:secondSize], firstSize-k, secondSize-k, proof)
 		*proof = append(*proof, merkleRoot(leaves[:k]))
 	}
@@ -169,7 +169,6 @@ func largestPowerOfTwoLessThan(n int) int {
 	if n < 1 {
 		return 0
 	}
-	// Highest power of two strictly less than n
 	return 1 << (bits.Len(uint(n-1)) - 1)
 }
 
@@ -190,10 +189,34 @@ func merkleRoot(leaves [][]byte) []byte {
 			if i+1 < len(level) {
 				right = level[i+1]
 			}
-			parent := MerkleNodeHash(left, right)
+			parent := merkleNodeHash(left, right)
 			next = append(next, parent)
 		}
 		level = next
 	}
 	return level[0]
+}
+
+func (t *MerkleTree) persist() error {
+	if t.storePath == "" {
+		return nil
+	}
+	data, err := cbor.Marshal(t.leaves)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(t.storePath, data, 0o644)
+}
+
+func (t *MerkleTree) load() error {
+	data, err := os.ReadFile(t.storePath)
+	if err != nil {
+		return err
+	}
+	var leaves [][]byte
+	if err := cbor.Unmarshal(data, &leaves); err != nil {
+		return err
+	}
+	t.leaves = leaves
+	return nil
 }
